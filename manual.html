@@ -1,0 +1,206 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>使い方と運用方法 — Rust Raid Loadout</title>
+<style>
+:root{--bg:#141210;--bg2:#1c1916;--panel:#242019;--line:#3b3429;--text:#ece4d6;--muted:#a99e8b;--dim:#7a7061;--accent:#e8620c;--accent2:#ffb15c;--ok:#7bc96f;--warn:#ffcf5c}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--text);font:15px/1.8 "Segoe UI","Yu Gothic UI","Meiryo",system-ui,sans-serif}
+a{color:var(--accent2)}
+.wrap{max-width:960px;margin:0 auto;padding:24px 20px 60px}
+header{border-bottom:1px solid var(--line);padding-bottom:14px;margin-bottom:20px}
+header .logo{font-weight:800;letter-spacing:.06em;color:var(--accent2);font-size:20px}
+header .logo small{display:block;font-size:11px;letter-spacing:.2em;color:var(--dim);font-weight:500}
+nav.toc{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:12px 18px;margin-bottom:24px}
+nav.toc ol{margin:0;padding-left:20px;columns:2;column-gap:30px}
+@media (max-width:640px){nav.toc ol{columns:1}}
+h1{font-size:22px;margin:0 0 6px}
+h2{font-size:18px;margin:36px 0 10px;padding-left:10px;border-left:4px solid var(--accent);color:#fff}
+h3{font-size:15px;margin:20px 0 6px;color:var(--accent2)}
+p{margin:6px 0}
+table{border-collapse:collapse;width:100%;margin:8px 0 12px;font-size:14px}
+th,td{border:1px solid var(--line);padding:7px 10px;text-align:left;vertical-align:top}
+th{background:var(--panel);color:var(--muted);font-weight:600;white-space:nowrap}
+tr:nth-child(even) td{background:var(--bg2)}
+code{background:var(--bg2);border:1px solid var(--line);border-radius:4px;padding:1px 6px;font:13px Consolas,monospace;color:#ffd9a8}
+pre{background:#0c0b09;border:1px solid var(--line);border-radius:8px;padding:12px 14px;overflow:auto;font:12.5px/1.5 Consolas,monospace}
+pre code{background:none;border:0;padding:0;color:#e8e0d0}
+.box{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:12px 16px;margin:10px 0}
+.box.warn{border-color:var(--warn)}
+.box.ok{border-color:var(--ok)}
+.box b:first-child{color:var(--accent2)}
+kbd{display:inline-block;border:1px solid var(--line);border-bottom-width:2px;border-radius:4px;padding:0 6px;font:12px Consolas,monospace;background:var(--bg2)}
+.slotdemo{display:inline-block;width:38px;height:38px;border:1px solid #4a4131;border-radius:6px;background:#1a1713;vertical-align:middle;margin:0 4px;text-align:center;line-height:36px;color:#4d4436}
+ul,ol{padding-left:22px}
+li{margin:3px 0}
+.step{counter-reset:none}
+footer{margin-top:40px;color:var(--dim);font-size:12px;border-top:1px solid var(--line);padding-top:14px}
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div class="logo">RUST RAID LOADOUT<small>レイド装備プランナー（非公式）— 使い方と運用方法</small></div>
+</header>
+
+<h1>このサイトでできること</h1>
+<p>Rust のレイドに参加する人ごとに「役割」を作り、<b>手持ち（ホットバー6）・バッグ（インベントリ24）・装備（着用8）・バックパック（小型12／大型28）</b>に入れるアイテムと数量を設定します。
+レイド当日は「レイド表示」で大きく確認しながら準備でき、設定したアイテム一覧は <b>工業用コンベアのフィルターJSON</b> としてコピーして、ゲーム内のコンベアにそのまま貼り付けられます。</p>
+
+<nav class="toc"><ol>
+  <li><a href="#open">開き方（ローカル／公開）</a></li>
+  <li><a href="#members">参加者・役割を作る</a></li>
+  <li><a href="#items">アイテムを入れる・数量・入れ替え</a></li>
+  <li><a href="#pack">バックパックを背負う／中身</a></li>
+  <li><a href="#raid">レイド当日の使い方（レイド表示・準備リスト）</a></li>
+  <li><a href="#conveyor">工業用コンベアへ貼り付ける</a></li>
+  <li><a href="#share">メンバーへの共有・バックアップ</a></li>
+  <li><a href="#ops">運用：データ保存場所・公開・月次更新</a></li>
+  <li><a href="#faq">困ったとき</a></li>
+  <li><a href="#legal">権利表記</a></li>
+</ol></nav>
+
+<h2 id="open">1. 開き方</h2>
+<h3>ローカルで使う（自分のPC）</h3>
+<p>フォルダ <code>rust-raid-planner</code> の中で次を実行し、ブラウザで <a href="http://localhost:8741">http://localhost:8741</a> を開きます。</p>
+<pre><code>node server.js</code></pre>
+<div class="box warn"><b>注意</b>：<code>index.html</code> をダブルクリック（file://）で開くとアイテム一覧（items.json）が読み込めません。必ず上のサーバ経由、または公開先のURLで開いてください。</div>
+<h3>公開して仲間と使う</h3>
+<p>静的サイトなので、フォルダをそのまま GitHub Pages / Cloudflare Pages / Netlify などに置くだけで動きます（サーバ側の処理はありません）。
+公開後は、メンバーには「共有リンク」（→<a href="#share">7章</a>）を送るだけで同じ計画を開けます。</p>
+
+<h2 id="members">2. 参加者・役割を作る</h2>
+<table>
+<tr><th>操作</th><th>方法</th></tr>
+<tr><td>役割を追加</td><td>左パネル「＋ 追加」→ 名前（例：太郎）と役割（例：爆破担当）を入力。色は左の色ボタンで変更</td></tr>
+<tr><td>テンプレートから追加</td><td>「テンプレ」→ 爆破担当 / 前衛・護衛 / ビルダー / 補給・回収 の4役（または「4役すべて追加」）。あとから自由に編集できます</td></tr>
+<tr><td>複製・並べ替え・削除</td><td>編集エリア上部の「複製」「▲▼」「削除」。「全消去」はその人のアイテムだけを空にします</td></tr>
+<tr><td>複数のレイド計画</td><td>ヘッダーの「＋ 新規計画」で計画を増やし、左上のプルダウンで切り替え。計画名は隣の欄で変更</td></tr>
+</table>
+
+<h2 id="items">3. アイテムを入れる・数量・入れ替え</h2>
+<table>
+<tr><th>操作</th><th>方法</th></tr>
+<tr><td>入れる</td><td>空スロット <span class="slotdemo">+</span> をクリック → 検索窓に入力 → クリックか <kbd>Enter</kbd>（先頭候補）。<kbd>↑</kbd><kbd>↓</kbd>で候補移動、<kbd>Esc</kbd>で閉じる</td></tr>
+<tr><td>検索できる言葉</td><td><b>日本語名・通称・英語名・shortname</b> のどれでも。例：<code>C4</code> <code>ロケラン</code> <code>HQM</code> <code>注射器</code> <code>ammo.rifle</code> <code>lr300</code>。上部のカテゴリボタン（★レイド定番／武器／弾薬／医療…）で絞り込み</td></tr>
+<tr><td>数量を変える</td><td>入っているスロットをクリック → 数量欄を編集（<kbd>Enter</kbd>で確定）または −／＋。弾薬は128、資源は1000など、よく使う初期値が自動で入ります</td></tr>
+<tr><td>入れ替え・移動</td><td>ドラッグ＆ドロップ（別の欄へも可）。スマホは スロットをタップ →「移動」→ 移動先をタップ</td></tr>
+<tr><td>削除</td><td>右クリック、またはスロットをクリック →「削除」</td></tr>
+<tr><td>アイテムの詳細</td><td>スロットにマウスを乗せると大きなアイコンと英語名・shortname を表示</td></tr>
+</table>
+
+<h2 id="pack">4. バックパックを背負う／中身を設定する</h2>
+<p>編集エリア一番下の「バックパック」欄のプルダウンで選びます。</p>
+<table>
+<tr><th>選択</th><th>中身のスロット</th><th>準備リスト・コンベアへの反映</th></tr>
+<tr><td>背負わない</td><td>表示されない</td><td>含まれない</td></tr>
+<tr><td>小型バックパック</td><td>12</td><td>中身 ＋ 小型バックパック本体×1</td></tr>
+<tr><td>大型バックパック</td><td>28</td><td>中身 ＋ 大型バックパック本体×1</td></tr>
+</table>
+<div class="box"><b>ヒント</b>：大型→小型に切り替えると13スロット目以降は隠れますが、データは消えません（「容量外に n 件あり」と表示）。大型に戻せば再表示されます。
+コンベア書出で中身を除外したいときは「バックパック（本体＋中身）も含める」のチェックを外します。</div>
+
+<h2 id="raid">5. レイド当日の使い方</h2>
+<ol>
+  <li>右上の「<b>⚔ レイド表示</b>」を押す → 編集UIが消え、大きなアイコン＋数量＋日本語名の一覧になります（スマホでも横スクロールなし）</li>
+  <li>上のタブで参加者を切り替え、各自が自分の役割のアイテムを箱から取り出す</li>
+  <li>下の「<b>準備リスト</b>」はアイテム種類ごとの合計数。取り出したらチェックを入れる（チェックは端末ごとに保存、「✓ リセット」で全解除）</li>
+  <li>「全員合計」タブで、レイド全体で必要な数（ロケット合計など）を確認</li>
+  <li>「✎ 編集に戻る」で通常画面へ</li>
+</ol>
+
+<h2 id="conveyor">6. 工業用コンベアへ貼り付ける</h2>
+<ol>
+  <li>右下「工業用コンベア フィルター書出」で対象を選ぶ（「この人」タブ＝選択中の参加者、「全員合計」タブ＝全員分）</li>
+  <li>「<b>📋 コピー</b>」を押す（クリップボードにJSONが入る。「JSON」ボタンで中身を確認可）</li>
+  <li>ゲーム内で工業用コンベアを開き、フィルター画面の <b>Paste</b>（貼り付け）ボタンを押す</li>
+  <li><b>Apply</b> で確定</li>
+</ol>
+<table>
+<tr><th>オプション</th><th>意味</th></tr>
+<tr><td>数量を Max（出力上限）に反映</td><td>ON：各アイテムの <code>MaxAmountInOutput</code> に数量が入り、「出力側の箱にその数だけ移して止まる」動作。OFF：0（上限なし）</td></tr>
+<tr><td>1台あたり N 件</td><td>1台のコンベアに入るフィルターは 12 件（版によって 16 件）。超える分は自動で「コンベア 1/2/3…」に分割されるので、台数分コピー→貼り付けを繰り返す</td></tr>
+<tr><td>装備も含める／バックパックも含める</td><td>着用品・バックパック（本体と中身）をフィルターに含めるか</td></tr>
+</table>
+<p>書き出される形式はゲーム内の「Copy(JSON)」と同じ構造です：</p>
+<pre><code>[
+  {
+    "TargetCategory": null,
+    "MaxAmountInOutput": 8,
+    "BufferAmount": 0,
+    "MinAmountInInput": 0,
+    "IsBlueprint": false,
+    "BufferTransferRemaining": 0,
+    "TargetItemName": "ammo.rocket.basic"
+  },
+  ...
+]</code></pre>
+<div class="box"><b>使い方の例</b>：レイド前に「準備箱」を作り、共用倉庫→コンベア→準備箱と配管。各役割のJSONを貼ったコンベアを動かすと、必要な数だけが準備箱に自動で集まります。</div>
+
+<h2 id="share">7. メンバーへの共有・バックアップ</h2>
+<table>
+<tr><th>方法</th><th>説明</th></tr>
+<tr><td>🔗 共有リンク</td><td>計画全体を圧縮してURLに埋め込みます（サーバ保存なし）。Discord等で送れば、受け取った人はそのURLを開くだけで「新しい計画」として取り込まれます。あとで編集しても相手側には反映されないので、更新したら再度リンクを送ってください</td></tr>
+<tr><td>💾 書出</td><td>計画をJSONテキストで表示 → コピーしてメモ等に保存（バックアップ用）</td></tr>
+<tr><td>📂 読込</td><td>書出したJSON、または共有リンクのURLを貼り付けて取り込み</td></tr>
+</table>
+<div class="box warn"><b>データの保存場所</b>：計画はブラウザの localStorage に保存されます（PC・ブラウザごとに別。同じPCでも別ブラウザには引き継がれません）。ブラウザのサイトデータを消すと消えるので、大事な計画は「書出」でバックアップしてください。</div>
+
+<h2 id="ops">8. 運用（管理者向け）</h2>
+<h3>ファイル構成</h3>
+<table>
+<tr><th>ファイル</th><th>役割</th></tr>
+<tr><td><code>index.html</code></td><td>アプリ本体（単一ファイル、外部ライブラリなし）</td></tr>
+<tr><td><code>items.json</code></td><td>アイテム台帳。<code>s</code>=shortname, <code>id</code>=itemId, <code>n</code>=英語名, <code>c</code>=カテゴリ, <code>j</code>=日本語名と別名, <code>r</code>=レイド定番フラグ</td></tr>
+<tr><td><code>icons/64/</code>, <code>icons/256/</code></td><td>アイテムアイコン（一覧用 / ツールチップ用）。Facepunch 公式CDN由来を自前ホスト</td></tr>
+<tr><td><code>server.js</code></td><td>ローカル用の静的サーバ（公開時は不要）</td></tr>
+<tr><td><code>manual.html</code></td><td>この説明書</td></tr>
+<tr><td><code>tools/jp_aliases.json</code></td><td>日本語名・通称の辞書（手書き）。<b>ここに追記すると検索に反映</b>（要 finalize 再実行）</td></tr>
+<tr><td><code>tools/build_items.js</code> ほか</td><td>台帳・アイコンの更新スクリプト（下記）</td></tr>
+</table>
+
+<h3>日本語名を増やす</h3>
+<p><code>tools/jp_aliases.json</code> に <code>"shortname": ["表示名", "別名1", "別名2"]</code> を追加し、後述の finalize（手順4）だけを再実行します。先頭が画面の表示名、以降は検索用の別名です。</p>
+
+<h3>月次更新（フォースワイプ後に新アイテムが増えたとき）</h3>
+<ol>
+  <li>公式Wikiの <a href="https://wiki.facepunch.com/rust/Items_Overview">Items_Overview</a> と <a href="https://rusthelp.com/tools/admin/item-list">rusthelp の item-list</a> のHTMLを保存（ブラウザで「名前を付けて保存」）</li>
+  <li><code>node tools/build_items.js &lt;wiki.html&gt; &lt;rusthelp.html&gt; tools/items_raw.json tools/shortnames_extra.txt</code></li>
+  <li><code>node tools/fetch_icons.js tools/items_raw.json</code>（公式CDN <code>files.facepunch.com/rust/item/{shortname}_{64|256}.png</code> から新規分だけ取得）</li>
+  <li><code>node tools/finalize_items.js tools/items_raw.json &lt;items_text.md&gt; tools/jp_aliases.json items.json</code>（<code>items_text.md</code> はカテゴリ補完用の <a href="https://github.com/rostov114/rust-items">rostov114/rust-items</a> の表）</li>
+  <li>更新した <code>items.json</code> と <code>icons/</code> を公開先へアップロード</li>
+</ol>
+<div class="box ok"><b>Node.js について</b>：このPCでは <code>C:\Program Files\nodejs\node.exe</code>。Git Bash から使う場合は <code>export PATH="/c/Program Files/nodejs:$PATH"</code> を先に実行。</div>
+
+<h3>公開先の目安</h3>
+<ul>
+  <li>合計サイズ：約75MB（大半が256pxアイコン）。GitHub Pages（1GB上限）で問題なし</li>
+  <li>キャッシュ：アイコンとitems.jsonは長めのキャッシュ設定で構いません。<code>index.html</code> を更新したら再読み込み（<kbd>Ctrl</kbd>+<kbd>F5</kbd>）を案内</li>
+  <li>アクセス解析や広告を載せる場合は <a href="#legal">権利表記</a> の条件を確認</li>
+</ul>
+
+<h2 id="faq">9. 困ったとき</h2>
+<table>
+<tr><th>症状</th><th>対処</th></tr>
+<tr><td>「items.json を読み込めませんでした」</td><td>file:// で開いている。<code>node server.js</code> 経由か公開URLで開く</td></tr>
+<tr><td>検索してもアイテムが出ない</td><td>英語名か shortname で試す（例：Timed Explosive Charge / explosive.timed）。日本語未登録なら <code>jp_aliases.json</code> に追加</td></tr>
+<tr><td>ゲーム内で Paste しても反映されない</td><td>クリップボードにJSONが入っているか「JSON」ボタンで確認 → もう一度コピー。1台の上限（12件）を超えていないか、「1台あたり」の設定を確認。<b>Apply</b> を押し忘れていないか</td></tr>
+<tr><td>アイコンが表示されないアイテムがある</td><td>公式CDNにアイコンが無い一部アイテム（廃止品・季節物など約180件）は台帳から除外しています</td></tr>
+<tr><td>他のPC/スマホで計画が出ない</td><td>保存はブラウザごと。共有リンクか「書出→読込」で移す</td></tr>
+<tr><td>コピーが効かない</td><td>httpsでない環境ではクリップボードAPIが制限されることがあります。「JSON」ボタンでテキストを表示し、手動で全選択→コピー</td></tr>
+</table>
+
+<h2 id="legal">10. 権利表記</h2>
+<ul>
+  <li>当サイトは Facepunch Studios Ltd. と提携しておらず、承認・後援も受けていない<b>非公式ファンツール</b>です。</li>
+  <li>Rust および関連するアイテム画像・名称は Facepunch Studios Ltd. の財産です。利用は Facepunch の <a href="https://facepunch.com/legal/ugc">Fan Content and Broadcast Guidelines</a>（コミュニティサイト作成を明示的に許可／「公式」を名乗らない／第三者IPは対象外）に従っています。</li>
+  <li>画像は公式Wikiが配信しているCDN（files.facepunch.com）から取得し、自前で再ホストしています（ホットリンクしません）。</li>
+  <li>本ツールを使って<b>他社の製品・サービスの宣伝</b>を行う場合は、ガイドライン上 Facepunch の書面承認が必要です。不明点は legal@facepunch.com へ。</li>
+</ul>
+
+<footer>Rust Raid Loadout — 非公式ファンツール。<a href="index.html">← アプリに戻る</a></footer>
+</div>
+</body>
+</html>

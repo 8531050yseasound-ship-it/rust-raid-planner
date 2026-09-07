@@ -1,0 +1,650 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Rust Raid Loadout — レイド装備プランナー</title>
+<meta name="description" content="Rustのレイド参加者ごとに手持ち・バッグのアイテムを設定し、工業用コンベアのフィルターJSONとして書き出せる非公式ツール">
+<style>
+:root{
+  --bg:#141210;--bg2:#1c1916;--panel:#242019;--panel2:#2c2720;--line:#3b3429;--line2:#4d4436;
+  --text:#ece4d6;--muted:#a99e8b;--dim:#7a7061;
+  --accent:#e8620c;--accent2:#ffb15c;--ok:#7bc96f;--warn:#ffcf5c;--bad:#ff6b57;
+  --slot:#1a1713;--slotb:#4a4131;--slotfill:#221d16;
+  --r:8px;
+}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--text);font:14px/1.5 "Segoe UI","Yu Gothic UI","Meiryo",system-ui,sans-serif}
+button,input,select,textarea{font:inherit;color:inherit}
+button{background:var(--panel2);border:1px solid var(--line2);border-radius:6px;padding:6px 10px;cursor:pointer}
+button:hover{border-color:var(--accent2);color:#fff}
+button.primary{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600}
+button.primary:hover{background:#ff7a22}
+button.ghost{background:transparent}
+button.small{padding:3px 8px;font-size:12px}
+button.danger:hover{border-color:var(--bad);color:var(--bad)}
+input[type=text],input[type=number],input[type=search],select,textarea{background:var(--bg2);border:1px solid var(--line2);border-radius:6px;padding:6px 8px;outline:none}
+input:focus,select:focus,textarea:focus{border-color:var(--accent2)}
+a{color:var(--accent2)}
+h1,h2,h3{margin:0;font-weight:600}
+.hidden{display:none!important}
+
+/* header */
+header{display:flex;flex-wrap:wrap;gap:10px;align-items:center;padding:10px 16px;background:var(--bg2);border-bottom:1px solid var(--line);position:sticky;top:0;z-index:20}
+header .logo{font-weight:800;letter-spacing:.06em;color:var(--accent2);font-size:16px;white-space:nowrap}
+header .logo small{display:block;font-size:10px;letter-spacing:.2em;color:var(--dim);font-weight:500}
+header .grow{flex:1}
+header .planname{width:220px}
+.toolbar{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+
+/* layout */
+main{display:grid;grid-template-columns:230px minmax(0,1fr) 340px;gap:14px;padding:14px 16px;max-width:1600px;margin:0 auto}
+@media (max-width:1100px){main{grid-template-columns:200px minmax(0,1fr)}.right{grid-column:1/-1}}
+@media (max-width:760px){main{grid-template-columns:1fr}.left{grid-column:1}}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:12px}
+.panel h2{font-size:13px;letter-spacing:.08em;color:var(--muted);text-transform:uppercase;margin-bottom:10px;display:flex;align-items:center;gap:8px}
+.panel h2 .grow{flex:1}
+
+/* members */
+.members{display:flex;flex-direction:column;gap:6px}
+.member{display:flex;align-items:center;gap:8px;padding:8px 10px;border:1px solid var(--line);border-radius:6px;background:var(--bg2);cursor:pointer}
+.member:hover{border-color:var(--line2)}
+.member.active{border-color:var(--accent);background:var(--panel2)}
+.member .dot{width:12px;height:12px;border-radius:50%;flex:none}
+.member .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.member .nm small{display:block;color:var(--dim);font-size:11px}
+.member .cnt{color:var(--dim);font-size:11px}
+
+/* editor */
+.mhead{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:12px}
+.mhead input[type=text]{width:170px}
+.mhead input[type=color]{width:34px;height:32px;padding:2px;background:var(--bg2);border:1px solid var(--line2);border-radius:6px}
+.zone{margin-bottom:14px}
+.zone h3{font-size:13px;color:var(--muted);margin-bottom:6px;display:flex;align-items:center;gap:8px}
+.zone h3 .k{font-size:11px;color:var(--dim);font-weight:400}
+.grid{display:grid;grid-template-columns:repeat(6,var(--cell,72px));gap:6px}
+.grid.wear{grid-template-columns:repeat(8,var(--cell,72px))}
+@media (max-width:520px){:root{--cell:52px}}
+.slot{position:relative;width:var(--cell,72px);height:var(--cell,72px);background:var(--slot);border:1px solid var(--slotb);border-radius:6px;cursor:pointer;display:flex;align-items:center;justify-content:center;user-select:none}
+.slot:hover{border-color:var(--accent2)}
+.slot.filled{background:var(--slotfill)}
+.slot img{width:84%;height:84%;object-fit:contain;pointer-events:none;image-rendering:auto}
+.slot .q{position:absolute;right:3px;bottom:1px;font-size:12px;font-weight:700;color:#fff;text-shadow:0 0 3px #000,0 0 3px #000}
+.slot .i{position:absolute;left:4px;top:2px;font-size:10px;color:var(--dim)}
+.packicon{width:22px;height:22px;vertical-align:middle}
+.zone h3 select{padding:3px 6px;font-size:12px}
+.slot .n{display:none}
+body.raid .slot .n{display:block}
+.slot.dragover{outline:2px dashed var(--accent2);outline-offset:-2px}
+.slot.selected{outline:2px solid var(--accent);outline-offset:-2px}
+.slot.empty::after{content:"+";color:var(--line2);font-size:22px}
+.slot.empty:hover::after{color:var(--accent2)}
+
+/* popover */
+.pop{position:absolute;z-index:30;background:var(--panel2);border:1px solid var(--line2);border-radius:8px;padding:10px;box-shadow:0 10px 30px rgba(0,0,0,.5);width:260px}
+.pop .row{display:flex;gap:6px;align-items:center;margin-top:8px}
+.pop img{width:40px;height:40px}
+.pop .nm{font-weight:600}
+.pop .sn{font-size:11px;color:var(--dim)}
+.pop input[type=number]{width:80px;text-align:right}
+
+/* summary */
+.sum{display:flex;flex-direction:column;gap:4px;max-height:420px;overflow:auto}
+.sum .it{display:flex;align-items:center;gap:8px;padding:4px 6px;border-radius:6px;background:var(--bg2)}
+.sum .it img{width:28px;height:28px}
+.sum .it .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sum .it .q{font-weight:700;font-variant-numeric:tabular-nums}
+.sum .it.done{opacity:.45;text-decoration:line-through}
+.sum .it input[type=checkbox]{width:16px;height:16px;accent-color:var(--accent)}
+.tabs{display:flex;gap:4px;margin-bottom:8px}
+.tabs button{padding:4px 10px;font-size:12px}
+.tabs button.on{background:var(--accent);border-color:var(--accent);color:#fff}
+
+/* conveyor */
+.conv .opt{display:flex;flex-wrap:wrap;gap:10px;align-items:center;font-size:12px;color:var(--muted);margin-bottom:8px}
+.conv .opt label{display:flex;align-items:center;gap:4px}
+.conv .blk{margin-bottom:8px;border:1px solid var(--line);border-radius:6px;background:var(--bg2)}
+.conv .blk .hd{display:flex;align-items:center;gap:8px;padding:6px 8px;border-bottom:1px solid var(--line);font-size:12px}
+.conv .blk .hd .grow{flex:1}
+.conv .blk .items{display:flex;flex-wrap:wrap;gap:3px;padding:6px 8px}
+.conv .blk .items img{width:24px;height:24px;background:var(--slot);border-radius:4px}
+.conv textarea{width:100%;height:90px;font:11px/1.35 Consolas,monospace;resize:vertical;display:none}
+.conv .blk.open textarea{display:block}
+.copied{color:var(--ok)!important;border-color:var(--ok)!important}
+.help{font-size:12px;color:var(--muted);line-height:1.6}
+.help ol{padding-left:18px;margin:6px 0}
+
+/* modal */
+.modal{position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:40;display:flex;align-items:flex-start;justify-content:center;padding:40px 12px}
+.modal .box{background:var(--panel);border:1px solid var(--line2);border-radius:10px;width:min(920px,100%);max-height:calc(100vh - 80px);display:flex;flex-direction:column;box-shadow:0 20px 60px rgba(0,0,0,.6)}
+.modal .top{display:flex;gap:8px;align-items:center;padding:12px;border-bottom:1px solid var(--line)}
+.modal .top input[type=search]{flex:1;font-size:15px}
+.cats{display:flex;flex-wrap:wrap;gap:4px;padding:8px 12px;border-bottom:1px solid var(--line)}
+.cats button{padding:3px 9px;font-size:12px}
+.cats button.on{background:var(--accent);border-color:var(--accent);color:#fff}
+.results{overflow:auto;padding:10px 12px;display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:6px}
+.res{display:flex;align-items:center;gap:8px;padding:5px;border:1px solid var(--line);border-radius:6px;background:var(--bg2);cursor:pointer;text-align:left}
+.res:hover,.res.kb{border-color:var(--accent2);background:var(--panel2)}
+.res img{width:40px;height:40px;flex:none}
+.res .nm{font-size:12px;line-height:1.25;overflow:hidden}
+.res .nm small{display:block;color:var(--dim);font-size:10px}
+.modal .foot{padding:8px 12px;border-top:1px solid var(--line);font-size:12px;color:var(--dim);display:flex;gap:10px;align-items:center}
+.modal.text .box{width:min(640px,100%)}
+.modal.text textarea{width:100%;height:220px;font:12px/1.4 Consolas,monospace}
+.modal.text .body{padding:12px;display:flex;flex-direction:column;gap:8px}
+
+/* raid mode */
+body.raid main{grid-template-columns:1fr;max-width:1200px}
+body.raid .left,body.raid .editor .mhead,body.raid .conv,body.raid .zone .k,body.raid .slot.empty::after{display:none}
+body.raid .raidtabs{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px}
+body.raid .raidtabs button{font-size:16px;padding:10px 18px;border-width:2px}
+body.raid .raidtabs button.on{color:#fff}
+body.raid :root{}
+body.raid .grid{--cell:clamp(44px,calc((100vw - 76px) / 6 - 6px),96px)}
+body.raid .grid.wear{--cell:clamp(36px,calc((100vw - 76px) / 8 - 6px),96px)}
+body.raid .slot .q{font-size:18px}
+body.raid .slot .n{position:absolute;left:0;right:0;bottom:-18px;font-size:11px;color:var(--muted);text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+body.raid .zone{margin-bottom:34px}
+body.raid .grid{gap:8px 6px;row-gap:26px}
+body.raid .right{grid-column:1}
+body.raid .sum{max-height:none}
+body.raid .sum .it{font-size:16px;padding:8px}
+body.raid .sum .it img{width:36px;height:36px}
+.raidtabs{display:none}
+body.raid .editonly{display:none}
+body:not(.raid) .raidonly{display:none}
+
+footer{padding:20px 16px 30px;color:var(--dim);font-size:11px;text-align:center;line-height:1.7}
+.toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);background:#111;border:1px solid var(--accent2);color:#fff;padding:8px 16px;border-radius:20px;z-index:50;opacity:0;transition:opacity .2s;pointer-events:none}
+.toast.show{opacity:1}
+.tip{position:fixed;z-index:45;background:#0c0b09;border:1px solid var(--line2);border-radius:8px;padding:8px;display:none;pointer-events:none;max-width:260px}
+.tip img{width:96px;height:96px;display:block;margin:0 auto 4px}
+.tip .nm{font-weight:600;text-align:center}
+.tip .sn{font-size:11px;color:var(--dim);text-align:center}
+.warn{color:var(--warn);font-size:12px}
+.badge{display:inline-block;padding:1px 6px;border-radius:10px;background:var(--panel2);border:1px solid var(--line2);font-size:11px;color:var(--muted)}
+</style>
+</head>
+<body>
+<header>
+  <div class="logo">RUST RAID LOADOUT<small>レイド装備プランナー（非公式）</small></div>
+  <select id="planSel" class="editonly" title="レイド計画の切替"></select>
+  <input id="planName" class="planname editonly" type="text" placeholder="計画名" title="計画名">
+  <div class="grow"></div>
+  <div class="toolbar">
+    <a href="manual.html" class="editonly" style="font-size:12px;margin-right:4px" title="使い方と運用方法">📖 使い方</a>
+    <button id="btnRaid" class="primary" title="レイド中に見やすい大きな表示に切り替え">⚔ レイド表示</button>
+    <button id="btnShare" title="この計画をURLとして共有（メンバーに送る）">🔗 共有リンク</button>
+    <button id="btnExport" class="editonly">💾 書出</button>
+    <button id="btnImport" class="editonly">📂 読込</button>
+    <button id="btnNewPlan" class="editonly">＋ 新規計画</button>
+    <button id="btnDelPlan" class="editonly danger" title="この計画を削除">🗑</button>
+  </div>
+</header>
+
+<main>
+  <aside class="left panel">
+    <h2>参加者 / 役割 <span class="grow"></span><span id="memberCount" class="badge"></span></h2>
+    <div id="members" class="members"></div>
+    <div class="toolbar" style="margin-top:10px">
+      <button id="btnAddMember" class="primary small">＋ 追加</button>
+      <button id="btnTemplate" class="small">テンプレ</button>
+    </div>
+    <p class="help" style="margin-top:10px">役割ごとに<b>手持ち(6)</b>・<b>バッグ(24)</b>・<b>装備(8)</b>を設定します。<br>スロットをクリック→アイテム検索。ドラッグで入れ替え。右クリックで削除。</p>
+  </aside>
+
+  <section class="editor panel">
+    <div id="raidtabs" class="raidtabs"></div>
+    <div id="editorEmpty" class="help">左の「＋ 追加」または「テンプレ」から参加者を作成してください。</div>
+    <div id="editor" class="hidden">
+      <div class="mhead">
+        <input type="color" id="mColor" title="色">
+        <input type="text" id="mName" placeholder="名前（例：太郎）">
+        <input type="text" id="mRole" placeholder="役割（例：爆破担当）">
+        <span class="grow"></span>
+        <button id="btnDup" class="small">複製</button>
+        <button id="btnUp" class="small" title="上へ">▲</button>
+        <button id="btnDown" class="small" title="下へ">▼</button>
+        <button id="btnClear" class="small">全消去</button>
+        <button id="btnDelMember" class="small danger">削除</button>
+      </div>
+      <div class="zone"><h3>手持ち <span class="k">ホットバー 6スロット</span></h3><div id="zBelt" class="grid"></div></div>
+      <div class="zone"><h3>バッグ <span class="k">インベントリ 24スロット</span></h3><div id="zMain" class="grid"></div></div>
+      <div class="zone"><h3>装備 <span class="k">着用 8スロット（任意）</span></h3><div id="zWear" class="grid wear"></div></div>
+      <div class="zone"><h3>バックパック
+          <select id="mPack" class="editonly" title="背負うバックパック"></select>
+          <img id="mPackIcon" class="packicon" alt="">
+          <span id="mPackLabel" class="raidonly"></span>
+          <span class="k" id="mPackNote"></span></h3>
+        <div id="zBag" class="grid"></div></div>
+    </div>
+  </section>
+
+  <aside class="right">
+    <div class="panel">
+      <h2>準備リスト <span class="grow"></span><button id="btnResetChecks" class="small ghost" title="チェックを全て外す">✓ リセット</button></h2>
+      <div class="tabs"><button id="tabMe" class="on">この人</button><button id="tabAll">全員合計</button></div>
+      <div id="summary" class="sum"></div>
+      <div id="sumTotal" class="help" style="margin-top:6px"></div>
+    </div>
+    <div class="panel conv" style="margin-top:14px">
+      <h2>工業用コンベア フィルター書出</h2>
+      <div class="opt">
+        <label><input type="checkbox" id="optQty" checked> 数量を Max（出力上限）に反映</label>
+        <label>1台あたり <select id="optChunk"><option value="12">12</option><option value="16">16</option><option value="999">分割なし</option></select> 件</label>
+        <label><input type="checkbox" id="optWear" checked> 装備も含める</label>
+        <label><input type="checkbox" id="optPack" checked> バックパック（本体＋中身）も含める</label>
+      </div>
+      <div id="convBlocks"></div>
+      <details class="help"><summary>ゲーム内での貼り付け手順</summary>
+        <ol>
+          <li>上の「📋 コピー」を押す（クリップボードにJSONが入る）</li>
+          <li>ゲーム内で工業用コンベアを開き、フィルター画面の <b>Paste</b>（貼り付け）ボタンを押す</li>
+          <li><b>Apply</b> で確定。1台のコンベアに入るフィルターは12件（版により16件）までなので、超える分は自動で複数台に分割しています</li>
+          <li>Max＝出力側コンテナに保つ上限数。数量ON なら「その数だけ箱に移す」動作になります。Min/Buffer は 0 のままです</li>
+        </ol>
+      </details>
+    </div>
+  </aside>
+</main>
+
+<footer>
+  当サイトは Facepunch Studios Ltd. と提携しておらず、同社の承認・後援を受けたものではありません（非公式ファンツール）。<br>
+  Rust および関連するアイテム画像・名称は Facepunch Studios Ltd. の財産です。データはブラウザ内（localStorage）にのみ保存されます。
+</footer>
+
+<div id="toast" class="toast"></div>
+<div id="tip" class="tip"><img alt=""><div class="nm"></div><div class="sn"></div></div>
+
+<!-- item picker -->
+<div id="picker" class="modal hidden">
+  <div class="box">
+    <div class="top">
+      <input id="pkSearch" type="search" placeholder="検索：日本語名 / 英語名 / shortname（例：C4, rocket, ammo.rifle）" autocomplete="off">
+      <button id="pkClose">閉じる</button>
+    </div>
+    <div id="pkCats" class="cats"></div>
+    <div id="pkResults" class="results"></div>
+    <div class="foot"><span id="pkCount"></span><span class="grow"></span>Enter＝先頭を選択 / Esc＝閉じる</div>
+  </div>
+</div>
+
+<!-- text modal (share/import) -->
+<div id="tmodal" class="modal text hidden">
+  <div class="box">
+    <div class="top"><h3 id="tmTitle"></h3><span class="grow"></span><button id="tmClose">閉じる</button></div>
+    <div class="body">
+      <div id="tmHelp" class="help"></div>
+      <textarea id="tmText"></textarea>
+      <div class="toolbar"><button id="tmCopy" class="primary">📋 コピー</button><button id="tmApply" class="hidden">読み込む</button><span id="tmMsg" class="help"></span></div>
+    </div>
+  </div>
+</div>
+
+<script>
+/* ============ data ============ */
+const ZONES = { belt: 6, main: 24, wear: 8, bag: 28 };           // bag = バックパックの中身（最大＝大型28）
+const PACKS = { none: { cap: 0, label: "背負わない" }, small: { cap: 12, s: "smallbackpack", label: "小型バックパック（12）" }, large: { cap: 28, s: "largebackpack", label: "大型バックパック（28）" } };
+const packCap = m => (PACKS[m.pack] || PACKS.none).cap;
+const CAT_JP = { Raid: "★レイド定番", Weapons: "武器", Ammo: "弾薬", Medical: "医療", Tools: "道具", Construction: "建築", Resources: "資源", Attire: "装備品", Items: "設置物", Components: "部品", Electrical: "電気", Traps: "罠", Food: "食料", Fun: "娯楽", Misc: "その他" };
+const CAT_ORDER = ["Raid", "Weapons", "Ammo", "Medical", "Tools", "Construction", "Resources", "Attire", "Items", "Components", "Electrical", "Traps", "Food", "Fun", "Misc"];
+let ITEMS = [], BY = new Map();
+const LS_KEY = "rrp.v1", LS_CHK = "rrp.checks.v1";
+const uid = () => Math.random().toString(36).slice(2, 9);
+const COLORS = ["#e8620c", "#3b9ddd", "#7bc96f", "#d65cc4", "#ffcf5c", "#ff6b57", "#5ad1c9", "#b98cff"];
+
+function emptyMember(name, role, color) {
+  return { id: uid(), name: name || "", role: role || "", color: color || COLORS[(state.plan().members.length) % COLORS.length], pack: "none", belt: Array(6).fill(null), main: Array(24).fill(null), wear: Array(8).fill(null), bag: Array(28).fill(null) };
+}
+function emptyPlan(name) { return { id: uid(), name: name || "レイド計画", updated: Date.now(), members: [] }; }
+
+const state = {
+  data: null, sel: null, tab: "me", checks: {},
+  plan() { return this.data.plans.find(p => p.id === this.data.current) || this.data.plans[0]; },
+  member() { return this.plan().members.find(m => m.id === this.sel) || null; },
+  save() { this.plan().updated = Date.now(); try { localStorage.setItem(LS_KEY, JSON.stringify(this.data)); } catch (e) { } },
+  saveChecks() { try { localStorage.setItem(LS_CHK, JSON.stringify(this.checks)); } catch (e) { } },
+  load() {
+    try { this.data = JSON.parse(localStorage.getItem(LS_KEY)); } catch (e) { }
+    try { this.checks = JSON.parse(localStorage.getItem(LS_CHK)) || {}; } catch (e) { this.checks = {}; }
+    if (!this.data || !Array.isArray(this.data.plans) || !this.data.plans.length) { const p = emptyPlan(); this.data = { plans: [p], current: p.id }; }
+    // 正規化
+    for (const p of this.data.plans) for (const m of p.members) {
+      for (const z in ZONES) { m[z] = (m[z] || []).slice(0, ZONES[z]); while (m[z].length < ZONES[z]) m[z].push(null); }
+      if (!PACKS[m.pack]) m.pack = "none";
+      // 旧データ移行：装備欄に入っていたバックパックは「背負う」設定へ
+      m.wear.forEach((x, i) => { if (x && (x.s === "largebackpack" || x.s === "smallbackpack")) { if (m.pack === "none") m.pack = x.s === "largebackpack" ? "large" : "small"; m.wear[i] = null; } });
+    }
+  }
+};
+
+/* ============ templates ============ */
+const ARMOR = [["metal.facemask", 1], ["metal.plate.torso", 1], ["roadsign.kilt", 1], ["hoodie", 1], ["pants", 1], ["shoes.boots", 1], ["tactical.gloves", 1]];
+const TEMPLATES = [
+  { name: "爆破担当", role: "Boomer", pack: "large", belt: [["rocket.launcher", 1], ["explosive.timed", 4], ["rifle.ak", 1], ["syringe.medical", 4], ["bandage", 5], ["ladder.wooden.wall", 4]], main: [["ammo.rocket.basic", 8], ["ammo.rocket.basic", 8], ["ammo.rifle", 128], ["ammo.rifle", 128], ["grenade.beancan", 10], ["largemedkit", 2], ["explosive.satchel", 6], ["sleepingbag", 1]], wear: ARMOR, bag: [["ammo.rocket.basic", 8], ["ammo.rocket.basic", 8], ["explosive.timed", 4], ["ammo.rifle.explosive", 128], ["ladder.wooden.wall", 4], ["syringe.medical", 4]] },
+  { name: "前衛/護衛", role: "Fighter", pack: "small", belt: [["rifle.ak", 1], ["shotgun.spas12", 1], ["syringe.medical", 6], ["bandage", 5], ["grenade.f1", 4], ["tool.binoculars", 1]], main: [["ammo.rifle", 128], ["ammo.rifle", 128], ["ammo.rifle", 128], ["ammo.shotgun", 64], ["largemedkit", 2], ["grenade.flashbang", 2], ["healingtea.advanced", 2], ["bearmeat.cooked", 5]], wear: ARMOR, bag: [["ammo.rifle", 128], ["ammo.rifle", 128], ["syringe.medical", 6]] },
+  { name: "ビルダー", role: "Builder", pack: "large", belt: [["building.planner", 1], ["hammer", 1], ["rifle.ak", 1], ["syringe.medical", 4], ["jackhammer", 1], ["cupboard.tool", 1]], main: [["wood", 1000], ["stones", 1000], ["stones", 1000], ["metal.fragments", 1000], ["door.hinged.metal", 4], ["lock.code", 4], ["wall.frame.garagedoor", 2], ["sheetmetal", 20], ["box.wooden.large", 2], ["sleepingbag", 3], ["ammo.rifle", 128], ["bandage", 5]], wear: [["coffeecan.helmet", 1], ["roadsign.jacket", 1], ["roadsign.kilt", 1], ["hoodie", 1], ["pants", 1], ["shoes.boots", 1], ["roadsign.gloves", 1]], bag: [["stones", 1000], ["stones", 1000], ["metal.fragments", 1000], ["wood", 1000], ["door.hinged.metal", 4], ["lock.code", 4], ["wall.external.high.stone", 4], ["barricade.metal", 4]] },
+  { name: "補給/回収", role: "Support", pack: "large", belt: [["rifle.lr300", 1], ["syringe.medical", 6], ["largemedkit", 3], ["bandage", 5], ["torch", 1], ["supply.signal", 1]], main: [["ammo.rifle", 128], ["ammo.rifle", 128], ["ammo.rocket.basic", 6], ["explosive.timed", 4], ["grenade.smoke", 4], ["water", 1], ["bearmeat.cooked", 10], ["box.wooden.large", 2], ["sleepingbag", 4], ["lowgradefuel", 200]], wear: ARMOR, bag: [["ammo.rocket.basic", 8], ["explosive.timed", 4], ["ammo.rifle", 128], ["ammo.rifle", 128], ["syringe.medical", 6], ["largemedkit", 3], ["sleepingbag", 4]] },
+];
+
+/* ============ helpers ============ */
+const $ = s => document.querySelector(s);
+const el = (t, a = {}, ...ch) => { const e = document.createElement(t); for (const k in a) { if (k === "class") e.className = a[k]; else if (k.startsWith("on")) e.addEventListener(k.slice(2), a[k]); else if (k === "html") e.innerHTML = a[k]; else e.setAttribute(k, a[k]); } for (const c of ch) if (c != null) e.append(c); return e; };
+const item = s => BY.get(s);
+const jname = it => it ? ((it.j && it.j[0]) || it.n) : "?";
+const ico = (s, size = 64) => `icons/${size}/${s}.png`;
+function defaultQty(it) {
+  if (!it) return 1;
+  if (it.s.startsWith("ammo.rocket")) return 3;
+  if (it.c === "Ammo") return it.s.includes("shotgun") ? 64 : 128;
+  if (it.c === "Resources") return 1000;
+  if (it.s === "syringe.medical") return 4; if (it.s === "bandage") return 5;
+  if (it.s === "explosive.timed" || it.s === "explosive.satchel" || it.s.startsWith("grenade.")) return 4;
+  if (it.c === "Components") return 10;
+  return 1;
+}
+let toastT; function toast(msg) { const t = $("#toast"); t.textContent = msg; t.classList.add("show"); clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove("show"), 1800); }
+async function copyText(text, btn) {
+  try { await navigator.clipboard.writeText(text); } catch (e) { const ta = el("textarea", { style: "position:fixed;opacity:0" }, text); document.body.append(ta); ta.select(); document.execCommand("copy"); ta.remove(); }
+  toast("コピーしました"); if (btn) { btn.classList.add("copied"); setTimeout(() => btn.classList.remove("copied"), 1200); }
+}
+
+/* ============ render: members ============ */
+function renderMembers() {
+  const p = state.plan(); const box = $("#members"); box.innerHTML = "";
+  $("#memberCount").textContent = p.members.length + "人";
+  for (const m of p.members) {
+    const n = countItems(m);
+    box.append(el("div", { class: "member" + (m.id === state.sel ? " active" : ""), onclick: () => { state.sel = m.id; renderAll(); } },
+      el("span", { class: "dot", style: "background:" + m.color }),
+      el("span", { class: "nm" }, (m.name || "(名前なし)"), el("small", {}, m.role || "役割未設定")),
+      el("span", { class: "cnt" }, n + "種")));
+  }
+  // raid tabs
+  const rt = $("#raidtabs"); rt.innerHTML = "";
+  for (const m of p.members) rt.append(el("button", { class: m.id === state.sel ? "on" : "", style: m.id === state.sel ? `background:${m.color};border-color:${m.color}` : `border-color:${m.color}`, onclick: () => { state.sel = m.id; renderAll(); } }, `${m.name || "(名前なし)"} ・ ${m.role || ""}`));
+  // header
+  const ps = $("#planSel"); ps.innerHTML = ""; for (const pl of state.data.plans) ps.append(el("option", { value: pl.id }, pl.name)); ps.value = p.id;
+  if (document.activeElement !== $("#planName")) $("#planName").value = p.name;
+}
+function countItems(m) { const s = new Set(); for (const z in ZONES) for (const x of m[z]) if (x) s.add(x.s); return s.size; }
+
+/* ============ render: editor ============ */
+function renderEditor() {
+  const m = state.member();
+  $("#editor").classList.toggle("hidden", !m); $("#editorEmpty").classList.toggle("hidden", !!m);
+  if (!m) return;
+  if (document.activeElement !== $("#mName")) $("#mName").value = m.name;
+  if (document.activeElement !== $("#mRole")) $("#mRole").value = m.role;
+  $("#mColor").value = m.color;
+  for (const [z, id] of [["belt", "#zBelt"], ["main", "#zMain"], ["wear", "#zWear"]]) {
+    const g = $(id); g.innerHTML = "";
+    m[z].forEach((x, i) => g.append(slotEl(m, z, i, x)));
+  }
+  // バックパック：種類セレクタ＋容量ぶんのスロット
+  const sel = $("#mPack"); if (!sel.options.length) for (const k in PACKS) sel.append(el("option", { value: k }, PACKS[k].label));
+  sel.value = m.pack; const pk = PACKS[m.pack]; const cap = pk.cap;
+  $("#mPackIcon").src = pk.s ? ico(pk.s) : ""; $("#mPackIcon").classList.toggle("hidden", !pk.s);
+  $("#mPackLabel").textContent = pk.s ? jname(item(pk.s)) : "背負わない";
+  const hidden = m.bag.slice(cap).filter(Boolean).length;
+  $("#mPackNote").textContent = cap ? `中身 ${cap}スロット` + (hidden ? `（容量外に ${hidden} 件あり：大型に変えると表示）` : "") : "";
+  const g = $("#zBag"); g.innerHTML = ""; g.classList.toggle("hidden", !cap);
+  for (let i = 0; i < cap; i++) g.append(slotEl(m, "bag", i, m.bag[i]));
+}
+$("#mPack").addEventListener("change", e => { const m = state.member(); if (m) { m.pack = e.target.value; state.save(); renderAll(); } });
+let moveSrc = null; // タップ移動用
+function slotEl(m, z, i, x) {
+  const it = x ? item(x.s) : null;
+  const d = el("div", { class: "slot " + (x && it ? "filled" : "empty"), draggable: x ? "true" : "false", "data-z": z, "data-i": i });
+  if (z === "belt") d.append(el("span", { class: "i" }, i + 1));
+  if (x && it) {
+    d.append(el("img", { src: ico(x.s), alt: jname(it), loading: "lazy" }));
+    if (x.q > 1) d.append(el("span", { class: "q" }, "×" + x.q));
+    d.append(el("span", { class: "n" }, jname(it)));
+    d.addEventListener("mouseenter", e => showTip(it, d)); d.addEventListener("mouseleave", hideTip);
+  }
+  if (moveSrc && moveSrc.z === z && moveSrc.i === i) d.classList.add("selected");
+  d.addEventListener("click", e => {
+    if (document.body.classList.contains("raid")) return;
+    if (moveSrc) { swap(m, moveSrc.z, moveSrc.i, z, i); moveSrc = null; return; }
+    if (x) openPop(m, z, i, d); else openPicker(sel => setSlot(m, z, i, sel));
+  });
+  d.addEventListener("contextmenu", e => { e.preventDefault(); if (x) { m[z][i] = null; state.save(); renderAll(); } });
+  d.addEventListener("dragstart", e => { e.dataTransfer.setData("text/plain", JSON.stringify({ z, i })); e.dataTransfer.effectAllowed = "move"; hideTip(); });
+  d.addEventListener("dragover", e => { e.preventDefault(); d.classList.add("dragover"); });
+  d.addEventListener("dragleave", () => d.classList.remove("dragover"));
+  d.addEventListener("drop", e => { e.preventDefault(); d.classList.remove("dragover"); try { const s = JSON.parse(e.dataTransfer.getData("text/plain")); swap(m, s.z, s.i, z, i); } catch (err) { } });
+  return d;
+}
+function swap(m, z1, i1, z2, i2) { if (z1 === z2 && i1 === i2) { renderAll(); return; } const a = m[z1][i1]; m[z1][i1] = m[z2][i2]; m[z2][i2] = a; state.save(); renderAll(); }
+function setSlot(m, z, i, it) { m[z][i] = { s: it.s, q: defaultQty(it) }; state.save(); renderAll(); }
+
+/* tooltip */
+function showTip(it, anchor) { const t = $("#tip"); t.querySelector("img").src = ico(it.s, 256); t.querySelector(".nm").textContent = jname(it); t.querySelector(".sn").textContent = (it.j ? it.n + " · " : "") + it.s; const r = anchor.getBoundingClientRect(); t.style.display = "block"; let x = r.right + 8, y = r.top; if (x + 200 > innerWidth) x = r.left - 208; if (y + 160 > innerHeight) y = innerHeight - 165; t.style.left = x + "px"; t.style.top = y + "px"; }
+function hideTip() { $("#tip").style.display = "none"; }
+
+/* popover */
+let popEl = null;
+function closePop() { if (popEl) { popEl.remove(); popEl = null; } }
+function openPop(m, z, i, anchor) {
+  closePop(); hideTip();
+  const x = m[z][i]; const it = item(x.s);
+  const qty = el("input", { type: "number", min: 1, max: 100000, value: x.q });
+  const commit = () => { x.q = Math.max(1, parseInt(qty.value) || 1); state.save(); renderAll(); };
+  qty.addEventListener("change", commit); qty.addEventListener("keydown", e => { if (e.key === "Enter") { commit(); closePop(); } });
+  popEl = el("div", { class: "pop" },
+    el("div", { class: "row", style: "margin-top:0" }, el("img", { src: ico(x.s) }), el("div", {}, el("div", { class: "nm" }, jname(it)), el("div", { class: "sn" }, (it.j ? it.n + " · " : "") + it.s))),
+    el("div", { class: "row" }, el("span", {}, "数量"), el("button", { class: "small", onclick: () => { qty.value = Math.max(1, (+qty.value || 1) - 1); commit(); } }, "−"), qty, el("button", { class: "small", onclick: () => { qty.value = (+qty.value || 0) + 1; commit(); } }, "＋")),
+    el("div", { class: "row" },
+      el("button", { class: "small", onclick: () => { closePop(); openPicker(sel => setSlot(m, z, i, sel)); } }, "変更"),
+      el("button", { class: "small", onclick: () => { closePop(); moveSrc = { z, i }; renderAll(); toast("移動先のスロットをクリック"); } }, "移動"),
+      el("span", { class: "grow", style: "flex:1" }),
+      el("button", { class: "small danger", onclick: () => { m[z][i] = null; state.save(); closePop(); renderAll(); } }, "削除")));
+  document.body.append(popEl);
+  const r = anchor.getBoundingClientRect(); let left = r.left + scrollX, top = r.bottom + scrollY + 6; if (left + 270 > innerWidth + scrollX) left = innerWidth + scrollX - 275; popEl.style.left = left + "px"; popEl.style.top = top + "px";
+  setTimeout(() => qty.select(), 0);
+}
+document.addEventListener("mousedown", e => { if (popEl && !popEl.contains(e.target) && !e.target.closest(".slot")) closePop(); });
+
+/* ============ summary ============ */
+function aggregate(members, includeWear = true, includePack = true) {
+  const map = new Map(); const add = (s, q) => map.set(s, (map.get(s) || 0) + q);
+  for (const m of members) {
+    for (const z in ZONES) {
+      if (z === "wear" && !includeWear) continue;
+      if (z === "bag" && !includePack) continue;
+      const n = z === "bag" ? packCap(m) : ZONES[z];           // バックパックは背負っている容量ぶんだけ
+      for (let i = 0; i < n; i++) { const x = m[z][i]; if (x && item(x.s)) add(x.s, x.q); }
+    }
+    const pk = PACKS[m.pack]; if (includePack && pk && pk.s && item(pk.s)) add(pk.s, 1);   // バックパック本体も準備対象
+  }
+  return [...map].map(([s, q]) => ({ it: item(s), q })).sort((a, b) => (b.it.r || 0) - (a.it.r || 0) || CAT_ORDER.indexOf(a.it.c) - CAT_ORDER.indexOf(b.it.c) || a.it.n.localeCompare(b.it.n));
+}
+function checkKey(mid) { return state.plan().id + "/" + (mid || "all"); }
+function renderSummary() {
+  const p = state.plan(); const m = state.member();
+  const list = state.tab === "all" ? aggregate(p.members) : (m ? aggregate([m]) : []);
+  $("#tabMe").classList.toggle("on", state.tab === "me"); $("#tabAll").classList.toggle("on", state.tab === "all");
+  const box = $("#summary"); box.innerHTML = "";
+  const ck = state.checks[checkKey(state.tab === "all" ? null : (m && m.id))] || {};
+  let total = 0, done = 0;
+  for (const { it, q } of list) {
+    total++; const isDone = !!ck[it.s]; if (isDone) done++;
+    const cb = el("input", { type: "checkbox" }); cb.checked = isDone;
+    cb.addEventListener("change", () => { const k = checkKey(state.tab === "all" ? null : (m && m.id)); state.checks[k] = state.checks[k] || {}; if (cb.checked) state.checks[k][it.s] = true; else delete state.checks[k][it.s]; state.saveChecks(); renderSummary(); });
+    box.append(el("div", { class: "it" + (isDone ? " done" : "") }, cb, el("img", { src: ico(it.s), loading: "lazy" }), el("span", { class: "nm" }, jname(it), it.j ? el("small", { style: "color:var(--dim)" }, " " + it.n) : null), el("span", { class: "q" }, "×" + q)));
+  }
+  $("#sumTotal").textContent = total ? `${total}種類 / 準備済み ${done}` : "アイテムがまだありません";
+}
+
+/* ============ conveyor ============ */
+function convEntry(s, max) { return { TargetCategory: null, MaxAmountInOutput: max, BufferAmount: 0, MinAmountInInput: 0, IsBlueprint: false, BufferTransferRemaining: 0, TargetItemName: s }; }
+function renderConv() {
+  const p = state.plan(); const m = state.member();
+  const useQty = $("#optQty").checked, chunk = +$("#optChunk").value, wear = $("#optWear").checked, pack = $("#optPack").checked;
+  const list = state.tab === "all" ? aggregate(p.members, wear, pack) : (m ? aggregate([m], wear, pack) : []);
+  const box = $("#convBlocks"); box.innerHTML = "";
+  if (!list.length) { box.append(el("div", { class: "help" }, "アイテムを設定すると、ここにコンベア用JSONが出ます。")); return; }
+  const label = state.tab === "all" ? "全員合計" : (m.name || "(名前なし)") + (m.role ? "・" + m.role : "");
+  const blocks = []; for (let i = 0; i < list.length; i += chunk) blocks.push(list.slice(i, i + chunk));
+  blocks.forEach((b, bi) => {
+    const json = JSON.stringify(b.map(({ it, q }) => convEntry(it.s, useQty ? q : 0)), null, 2);
+    const ta = el("textarea", { readonly: "" }, json);
+    const blk = el("div", { class: "blk" });
+    const btnCopy = el("button", { class: "small primary", onclick: e => copyText(json, btnCopy) }, "📋 コピー");
+    blk.append(el("div", { class: "hd" }, el("b", {}, blocks.length > 1 ? `コンベア ${bi + 1}/${blocks.length}` : "コンベア"), el("span", { class: "badge" }, b.length + "件"), el("span", { style: "color:var(--dim)" }, label), el("span", { class: "grow" }), el("button", { class: "small ghost", onclick: () => blk.classList.toggle("open") }, "JSON"), btnCopy),
+      el("div", { class: "items" }, ...b.map(({ it, q }) => el("img", { src: ico(it.s), title: jname(it) + (useQty ? " ×" + q : "") }))), ta);
+    box.append(blk);
+  });
+  if (blocks.length > 1) box.append(el("div", { class: "warn" }, `${list.length}件 → ${blocks.length}台のコンベアに分割（1台 ${chunk} 件まで）`));
+}
+
+/* ============ picker ============ */
+let pkCb = null, pkCat = "Raid", pkKb = 0;
+function openPicker(cb) {
+  pkCb = cb; $("#picker").classList.remove("hidden"); const s = $("#pkSearch"); s.value = ""; pkKb = 0; renderCats(); renderResults(); setTimeout(() => s.focus(), 0);
+}
+function closePicker() { $("#picker").classList.add("hidden"); pkCb = null; }
+function renderCats() {
+  const c = $("#pkCats"); c.innerHTML = "";
+  for (const k of CAT_ORDER) { if (k !== "Raid" && !ITEMS.some(i => i.c === k)) continue; c.append(el("button", { class: k === pkCat ? "on" : "", onclick: () => { pkCat = k; renderCats(); renderResults(); } }, CAT_JP[k] || k)); }
+  c.append(el("button", { class: pkCat === "All" ? "on" : "", onclick: () => { pkCat = "All"; renderCats(); renderResults(); } }, "すべて"));
+}
+function norm(s) { return s.toLowerCase().normalize("NFKC").replace(/[ァ-ヶ]/g, ch => String.fromCharCode(ch.charCodeAt(0) - 0x60)); } // カタカナ→ひらがな
+function searchItems(q) {
+  q = norm(q.trim());
+  let pool = pkCat === "All" || q ? ITEMS : ITEMS.filter(i => pkCat === "Raid" ? i.r : i.c === pkCat);
+  if (!q) return pool.slice(0, 400);
+  const scored = [];
+  for (const it of pool) {
+    const nm = norm(it.n), sn = it.s.toLowerCase(), js = (it.j || []).map(norm);
+    let sc = -1;
+    if (js.some(j => j === q) || nm === q || sn === q) sc = 100;
+    else if (js.some(j => j.startsWith(q)) || nm.startsWith(q) || sn.startsWith(q)) sc = 80;
+    else if (js.some(j => j.includes(q)) || nm.includes(q) || sn.includes(q)) sc = 60;
+    else if (q.split(/\s+/).every(w => nm.includes(w) || sn.includes(w) || js.some(j => j.includes(w)))) sc = 40;
+    if (sc >= 0) scored.push({ it, sc: sc + (it.r ? 5 : 0) + (pkCat !== "All" && (pkCat === "Raid" ? it.r : it.c === pkCat) ? 3 : 0) });
+  }
+  return scored.sort((a, b) => b.sc - a.sc || a.it.n.localeCompare(b.it.n)).map(x => x.it).slice(0, 300);
+}
+function renderResults() {
+  const q = $("#pkSearch").value; const res = searchItems(q); const box = $("#pkResults"); box.innerHTML = "";
+  res.forEach((it, idx) => box.append(el("button", { class: "res" + (idx === pkKb ? " kb" : ""), onclick: () => pick(it) }, el("img", { src: ico(it.s), loading: "lazy", alt: "" }), el("span", { class: "nm" }, jname(it), el("small", {}, it.j ? it.n : it.s)))));
+  $("#pkCount").textContent = res.length + "件";
+  box._res = res;
+}
+function pick(it) { const cb = pkCb; closePicker(); if (cb) cb(it); }
+$("#pkSearch").addEventListener("input", () => { pkKb = 0; renderResults(); });
+$("#pkSearch").addEventListener("keydown", e => {
+  const res = $("#pkResults")._res || [];
+  if (e.key === "Enter") { e.preventDefault(); if (res[pkKb]) pick(res[pkKb]); }
+  else if (e.key === "ArrowDown") { e.preventDefault(); pkKb = Math.min(res.length - 1, pkKb + 1); renderResults(); }
+  else if (e.key === "ArrowUp") { e.preventDefault(); pkKb = Math.max(0, pkKb - 1); renderResults(); }
+  else if (e.key === "Escape") closePicker();
+});
+$("#pkClose").addEventListener("click", closePicker);
+$("#picker").addEventListener("mousedown", e => { if (e.target === $("#picker")) closePicker(); });
+
+/* ============ share / import ============ */
+const b64u = { enc: b => btoa(String.fromCharCode(...b)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, ""), dec: s => Uint8Array.from(atob(s.replace(/-/g, "+").replace(/_/g, "/")), c => c.charCodeAt(0)) };
+async function encodePlan(p) {
+  const json = JSON.stringify({ v: 2, name: p.name, members: p.members.map(m => ({ name: m.name, role: m.role, color: m.color, pack: m.pack, belt: m.belt, main: m.main, wear: m.wear, bag: m.bag.slice(0, packCap(m)) })) });
+  const bytes = new TextEncoder().encode(json);
+  if (typeof CompressionStream === "function") { const cs = new CompressionStream("deflate-raw"); const w = cs.writable.getWriter(); w.write(bytes); w.close(); const out = new Uint8Array(await new Response(cs.readable).arrayBuffer()); return "d" + b64u.enc(out); }
+  return "j" + b64u.enc(bytes);
+}
+async function decodePlan(str) {
+  const kind = str[0], body = str.slice(1); let bytes = b64u.dec(body);
+  if (kind === "d") { const ds = new DecompressionStream("deflate-raw"); const w = ds.writable.getWriter(); w.write(bytes); w.close(); bytes = new Uint8Array(await new Response(ds.readable).arrayBuffer()); }
+  return JSON.parse(new TextDecoder().decode(bytes));
+}
+function importPlanObj(obj, asNew = true) {
+  const p = emptyPlan(obj.name || "読み込んだ計画");
+  for (const m of obj.members || []) { const nm = { id: uid(), name: m.name || "", role: m.role || "", color: m.color || COLORS[p.members.length % COLORS.length], pack: PACKS[m.pack] ? m.pack : "none", belt: [], main: [], wear: [], bag: [] }; for (const z in ZONES) { nm[z] = (m[z] || []).slice(0, ZONES[z]).map(x => x && item(x.s) ? { s: x.s, q: Math.max(1, +x.q || 1) } : null); while (nm[z].length < ZONES[z]) nm[z].push(null); } p.members.push(nm); }
+  if (asNew) { state.data.plans.push(p); state.data.current = p.id; } else { const cur = state.plan(); cur.name = p.name; cur.members = p.members; }
+  state.sel = p.members[0] ? p.members[0].id : null; state.save(); renderAll();
+}
+function openText(title, help, text, applyFn) {
+  $("#tmTitle").textContent = title; $("#tmHelp").innerHTML = help; $("#tmText").value = text; $("#tmMsg").textContent = "";
+  $("#tmApply").classList.toggle("hidden", !applyFn); $("#tmText").readOnly = !applyFn; $("#tmodal").classList.remove("hidden");
+  $("#tmApply").onclick = () => applyFn && applyFn($("#tmText").value);
+  setTimeout(() => { $("#tmText").focus(); if (!applyFn) $("#tmText").select(); }, 0);
+}
+$("#tmClose").addEventListener("click", () => $("#tmodal").classList.add("hidden"));
+$("#tmCopy").addEventListener("click", e => copyText($("#tmText").value, e.currentTarget));
+$("#tmodal").addEventListener("mousedown", e => { if (e.target === $("#tmodal")) $("#tmodal").classList.add("hidden"); });
+
+$("#btnShare").addEventListener("click", async () => {
+  const p = state.plan(); const code = await encodePlan(p);
+  const url = location.origin + location.pathname + "#s=" + code;
+  openText("共有リンク", `このURLをメンバーに送ると、同じ計画が開けます（データはURLに含まれ、サーバには保存されません）。長さ: ${url.length} 文字`, url, null);
+});
+$("#btnExport").addEventListener("click", () => {
+  const p = state.plan(); const json = JSON.stringify({ v: 1, name: p.name, members: p.members }, null, 2);
+  openText("JSON 書き出し", "この計画のJSONです。コピーして保存してください。", json, null);
+});
+$("#btnImport").addEventListener("click", () => {
+  openText("JSON 読み込み", "書き出したJSON、または共有リンク（URL）を貼り付けて「読み込む」を押してください。新しい計画として追加されます。", "", async txt => {
+    txt = txt.trim();
+    try {
+      let obj; const m = txt.match(/#s=([A-Za-z0-9_\-]+)/); if (m) obj = await decodePlan(m[1]); else obj = JSON.parse(txt);
+      importPlanObj(obj, true); $("#tmodal").classList.add("hidden"); toast("読み込みました");
+    } catch (e) { $("#tmMsg").textContent = "読み込めませんでした: " + e.message; }
+  });
+});
+async function handleHash() {
+  const m = location.hash.match(/#s=([A-Za-z0-9_\-]+)/); if (!m) return;
+  try { const obj = await decodePlan(m[1]); history.replaceState(null, "", location.pathname); importPlanObj(obj, true); toast("共有された計画を読み込みました"); }
+  catch (e) { toast("共有リンクを読み込めませんでした"); }
+}
+
+/* ============ header / members actions ============ */
+$("#planSel").addEventListener("change", e => { state.data.current = e.target.value; state.sel = (state.plan().members[0] || {}).id || null; state.save(); renderAll(); });
+$("#planName").addEventListener("input", e => { state.plan().name = e.target.value; state.save(); renderMembers(); });
+$("#btnNewPlan").addEventListener("click", () => { const p = emptyPlan("レイド計画 " + (state.data.plans.length + 1)); state.data.plans.push(p); state.data.current = p.id; state.sel = null; state.save(); renderAll(); });
+$("#btnDelPlan").addEventListener("click", () => { const p = state.plan(); if (!confirm(`計画「${p.name}」を削除しますか？`)) return; state.data.plans = state.data.plans.filter(x => x.id !== p.id); if (!state.data.plans.length) state.data.plans.push(emptyPlan()); state.data.current = state.data.plans[0].id; state.sel = (state.plan().members[0] || {}).id || null; state.save(); renderAll(); });
+$("#btnAddMember").addEventListener("click", () => { const m = emptyMember("", ""); state.plan().members.push(m); state.sel = m.id; state.save(); renderAll(); setTimeout(() => $("#mName").focus(), 0); });
+function addTemplates(list) {
+  const p = state.plan();
+  for (const t of list) { const m = emptyMember(t.name, t.role); m.pack = t.pack || "none"; for (const z in ZONES) (t[z] || []).forEach(([s, q], i) => { if (item(s) && i < ZONES[z]) m[z][i] = { s, q }; }); p.members.push(m); state.sel = m.id; }
+  state.save(); renderAll();
+}
+$("#btnTemplate").addEventListener("click", e => {
+  closePop();
+  popEl = el("div", { class: "pop" }, el("div", { class: "nm" }, "テンプレートから追加"),
+    ...TEMPLATES.map(t => el("div", { class: "row" }, el("button", { class: "small", style: "flex:1;text-align:left", onclick: () => { closePop(); addTemplates([t]); } }, `${t.name}（${t.role}）`))),
+    el("div", { class: "row" }, el("button", { class: "small primary", style: "flex:1", onclick: () => { closePop(); addTemplates(TEMPLATES); } }, "4役すべて追加")));
+  document.body.append(popEl);
+  const r = e.currentTarget.getBoundingClientRect(); popEl.style.left = (r.left + scrollX) + "px"; popEl.style.top = (r.bottom + scrollY + 6) + "px";
+});
+$("#mName").addEventListener("input", e => { const m = state.member(); if (m) { m.name = e.target.value; state.save(); renderMembers(); } });
+$("#mRole").addEventListener("input", e => { const m = state.member(); if (m) { m.role = e.target.value; state.save(); renderMembers(); } });
+$("#mColor").addEventListener("input", e => { const m = state.member(); if (m) { m.color = e.target.value; state.save(); renderMembers(); } });
+$("#btnDup").addEventListener("click", () => { const m = state.member(); if (!m) return; const c = JSON.parse(JSON.stringify(m)); c.id = uid(); c.name = (m.name || "") + " (複製)"; c.color = COLORS[state.plan().members.length % COLORS.length]; state.plan().members.push(c); state.sel = c.id; state.save(); renderAll(); });
+$("#btnUp").addEventListener("click", () => moveMember(-1)); $("#btnDown").addEventListener("click", () => moveMember(1));
+function moveMember(d) { const ms = state.plan().members; const i = ms.findIndex(x => x.id === state.sel); const j = i + d; if (i < 0 || j < 0 || j >= ms.length) return; [ms[i], ms[j]] = [ms[j], ms[i]]; state.save(); renderAll(); }
+$("#btnClear").addEventListener("click", () => { const m = state.member(); if (m && confirm("この参加者のアイテムを全て消去しますか？")) { for (const z in ZONES) m[z] = Array(ZONES[z]).fill(null); state.save(); renderAll(); } });
+$("#btnDelMember").addEventListener("click", () => { const m = state.member(); if (m && confirm(`「${m.name || "(名前なし)"}」を削除しますか？`)) { const ms = state.plan().members; const i = ms.findIndex(x => x.id === m.id); ms.splice(i, 1); state.sel = (ms[i] || ms[i - 1] || {}).id || null; state.save(); renderAll(); } });
+$("#tabMe").addEventListener("click", () => { state.tab = "me"; renderSummary(); renderConv(); });
+$("#tabAll").addEventListener("click", () => { state.tab = "all"; renderSummary(); renderConv(); });
+$("#btnResetChecks").addEventListener("click", () => { const m = state.member(); delete state.checks[checkKey(state.tab === "all" ? null : (m && m.id))]; state.saveChecks(); renderSummary(); });
+for (const id of ["#optQty", "#optChunk", "#optWear", "#optPack"]) $(id).addEventListener("change", renderConv);
+$("#btnRaid").addEventListener("click", () => { const on = document.body.classList.toggle("raid"); $("#btnRaid").textContent = on ? "✎ 編集に戻る" : "⚔ レイド表示"; closePop(); moveSrc = null; renderAll(); });
+document.addEventListener("keydown", e => { if (e.key === "Escape") { closePop(); if (moveSrc) { moveSrc = null; renderAll(); } } });
+
+function renderAll() { renderMembers(); renderEditor(); renderSummary(); renderConv(); }
+
+/* ============ boot ============ */
+(async function boot() {
+  try {
+    const r = await fetch("items.json"); if (!r.ok) throw new Error(r.status);
+    ITEMS = await r.json(); BY = new Map(ITEMS.map(i => [i.s, i]));
+  } catch (e) { $("#editorEmpty").innerHTML = `<span class="warn">items.json を読み込めませんでした（${e.message}）。file:// ではなく http サーバ経由で開いてください。</span>`; $("#editorEmpty").classList.remove("hidden"); return; }
+  state.load();
+  if (!state.sel) state.sel = (state.plan().members[0] || {}).id || null;
+  await handleHash();
+  renderAll();
+})();
+</script>
+</body>
+</html>

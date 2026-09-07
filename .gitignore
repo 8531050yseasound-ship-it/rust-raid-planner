@@ -1,0 +1,9 @@
+tools/fetch_result.json
+tools/fetch_log.txt
+tools/fetch_missing.txt
+tools/shortnames_extra.txt
+tools/shortnames_wiki.txt
+tools/fetch_icons.sh
+node_modules/
+.DS_Store
+Thumbs.db

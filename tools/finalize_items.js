@@ -32,6 +32,9 @@ for (const it of raw) {
   if (RAID.has(it.s)) o.r = 1;
   items.push(o);
 }
+// スタック上限（tools/stacks.json = add_stacks.js が Corrosion Hour から抽出）
+let stacks = {}; try { stacks = JSON.parse(fs.readFileSync(path.join(__dirname, "stacks.json"), "utf8")); } catch { console.warn("stacks.json なし（st=1）"); }
+for (const it of items) it.st = stacks[it.s] || 1;
 items.sort((a, b) => (b.r || 0) - (a.r || 0) || a.n.localeCompare(b.n));
 fs.writeFileSync(outP, JSON.stringify(items));
 const cc = {}; for (const i of items) cc[i.c] = (cc[i.c] || 0) + 1;

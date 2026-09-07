@@ -163,6 +163,17 @@ footer{padding:20px 16px 30px;color:var(--dim);font-size:11px;text-align:center;
 .tip .sn{font-size:11px;color:var(--dim);text-align:center}
 .warn{color:var(--warn);font-size:12px}
 .badge{display:inline-block;padding:1px 6px;border-radius:10px;background:var(--panel2);border:1px solid var(--line2);font-size:11px;color:var(--muted)}
+.badge.mine{border-color:var(--ok);color:var(--ok)}
+.roombar{display:flex;flex-wrap:wrap;gap:8px 12px;align-items:center;padding:8px 16px;background:#1f2a1c;border-bottom:1px solid #3a4d34;font-size:13px}
+.roombar .live{color:var(--ok);font-size:10px}
+.roombar .live.err{color:var(--bad)}
+.roombar .live.busy{color:var(--warn)}
+.roombar .grow{flex:1}
+body.room .localonly{display:none!important}
+.ro-banner{background:var(--panel2);border:1px solid var(--line2);border-radius:6px;padding:6px 10px;font-size:12px;color:var(--muted);margin-bottom:10px;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.editor.ro .slot{cursor:default}
+.editor.ro .slot:hover{border-color:var(--slotb)}
+.editor.ro .slot.empty::after{content:""}
 </style>
 </head>
 <body>
@@ -174,13 +185,22 @@ footer{padding:20px 16px 30px;color:var(--dim);font-size:11px;text-align:center;
   <div class="toolbar">
     <a href="manual.html" class="editonly" style="font-size:12px;margin-right:4px" title="使い方と運用方法">📖 使い方</a>
     <button id="btnRaid" class="primary" title="レイド中に見やすい大きな表示に切り替え">⚔ レイド表示</button>
+    <button id="btnRoom" class="editonly localonly hidden" title="みんなで同時編集できるオンライン部屋を作り、URLを共有する">🌐 オンライン部屋を作る</button>
     <button id="btnShare" title="この計画をURLとして共有（メンバーに送る）">🔗 共有リンク</button>
     <button id="btnExport" class="editonly">💾 書出</button>
-    <button id="btnImport" class="editonly">📂 読込</button>
-    <button id="btnNewPlan" class="editonly">＋ 新規計画</button>
-    <button id="btnDelPlan" class="editonly danger" title="この計画を削除">🗑</button>
+    <button id="btnImport" class="editonly localonly">📂 読込</button>
+    <button id="btnNewPlan" class="editonly localonly">＋ 新規計画</button>
+    <button id="btnDelPlan" class="editonly localonly danger" title="この計画を削除">🗑</button>
   </div>
 </header>
+<div id="roombar" class="roombar hidden">
+  <span class="live" id="roomStatus">●</span>
+  <b>🌐 オンライン部屋</b> <span id="roomName"></span>
+  <span class="help">URLを開いた人は誰でも閲覧でき、<b>自分の投稿</b>だけ追加・編集・削除できます。他の人の投稿は「コピーして自分用に編集」で使えます。</span>
+  <span class="grow"></span>
+  <button id="btnRoomUrl" class="small primary">🔗 部屋のURLをコピー</button>
+  <button id="btnRoomLeave" class="small editonly">退出（ローカルへ）</button>
+</div>
 
 <main>
   <aside class="left panel">
@@ -197,6 +217,7 @@ footer{padding:20px 16px 30px;color:var(--dim);font-size:11px;text-align:center;
     <div id="raidtabs" class="raidtabs"></div>
     <div id="editorEmpty" class="help">左の「＋ 追加」または「テンプレ」から参加者を作成してください。</div>
     <div id="editor" class="hidden">
+      <div id="roBanner" class="ro-banner hidden"><span>👀 <b id="roWho"></b> の投稿（閲覧のみ）</span><button id="btnCopyMine" class="small primary">コピーして自分用に編集</button></div>
       <div class="mhead">
         <input type="color" id="mColor" title="色">
         <input type="text" id="mName" placeholder="名前（例：太郎）">
@@ -281,6 +302,7 @@ footer{padding:20px 16px 30px;color:var(--dim);font-size:11px;text-align:center;
   </div>
 </div>
 
+<script src="firebase-config.js"></script>
 <script>
 /* ============ data ============ */
 const ZONES = { belt: 6, main: 24, wear: 8, bag: 28 };           // bag = バックパックの中身（最大＝大型28）
@@ -294,15 +316,18 @@ const uid = () => Math.random().toString(36).slice(2, 9);
 const COLORS = ["#e8620c", "#3b9ddd", "#7bc96f", "#d65cc4", "#ffcf5c", "#ff6b57", "#5ad1c9", "#b98cff"];
 
 function emptyMember(name, role, color) {
-  return { id: uid(), name: name || "", role: role || "", color: color || COLORS[(state.plan().members.length) % COLORS.length], pack: "none", belt: Array(6).fill(null), main: Array(24).fill(null), wear: Array(8).fill(null), bag: Array(28).fill(null) };
+  const ms = state.plan().members;
+  const m = { id: uid(), name: name || "", role: role || "", color: color || COLORS[ms.length % COLORS.length], pack: "none", belt: Array(6).fill(null), main: Array(24).fill(null), wear: Array(8).fill(null), bag: Array(28).fill(null) };
+  if (isRoom()) { m.uid = sync.uid; m.order = ms.reduce((a, x) => Math.max(a, x.order ?? 0), 0) + 1; m.createdAt = Date.now(); }
+  return m;
 }
 function emptyPlan(name) { return { id: uid(), name: name || "レイド計画", updated: Date.now(), members: [] }; }
 
 const state = {
   data: null, sel: null, tab: "me", checks: {},
-  plan() { return this.data.plans.find(p => p.id === this.data.current) || this.data.plans[0]; },
+  plan() { if (sync.plan) return sync.plan; return this.data.plans.find(p => p.id === this.data.current) || this.data.plans[0]; },
   member() { return this.plan().members.find(m => m.id === this.sel) || null; },
-  save() { this.plan().updated = Date.now(); try { localStorage.setItem(LS_KEY, JSON.stringify(this.data)); } catch (e) { } },
+  save() { if (sync.plan) { syncPushDirty(); return; } this.plan().updated = Date.now(); try { localStorage.setItem(LS_KEY, JSON.stringify(this.data)); } catch (e) { } },
   saveChecks() { try { localStorage.setItem(LS_CHK, JSON.stringify(this.checks)); } catch (e) { } },
   load() {
     try { this.data = JSON.parse(localStorage.getItem(LS_KEY)); } catch (e) { }
@@ -358,14 +383,17 @@ function renderMembers() {
     box.append(el("div", { class: "member" + (m.id === state.sel ? " active" : ""), onclick: () => { state.sel = m.id; renderAll(); } },
       el("span", { class: "dot", style: "background:" + m.color }),
       el("span", { class: "nm" }, (m.name || "(名前なし)"), el("small", {}, m.role || "役割未設定")),
+      isRoom() ? el("span", { class: "badge" + (isMine(m) ? " mine" : "") }, isMine(m) ? "自分" : "閲覧") : null,
       el("span", { class: "cnt" }, n + "種")));
   }
   // raid tabs
   const rt = $("#raidtabs"); rt.innerHTML = "";
   for (const m of p.members) rt.append(el("button", { class: m.id === state.sel ? "on" : "", style: m.id === state.sel ? `background:${m.color};border-color:${m.color}` : `border-color:${m.color}`, onclick: () => { state.sel = m.id; renderAll(); } }, `${m.name || "(名前なし)"} ・ ${m.role || ""}`));
   // header
-  const ps = $("#planSel"); ps.innerHTML = ""; for (const pl of state.data.plans) ps.append(el("option", { value: pl.id }, pl.name)); ps.value = p.id;
+  const ps = $("#planSel"); ps.innerHTML = ""; for (const pl of state.data.plans) ps.append(el("option", { value: pl.id }, pl.name)); if (!isRoom()) ps.value = p.id;
   if (document.activeElement !== $("#planName")) $("#planName").value = p.name;
+  $("#planName").disabled = isRoom() && !(sync.roomDoc && sync.roomDoc.createdBy === sync.uid);
+  $("#planName").title = $("#planName").disabled ? "部屋の名前は作成者だけが変更できます" : "計画名";
 }
 function countItems(m) { const s = new Set(); for (const z in ZONES) for (const x of m[z]) if (x) s.add(x.s); return s.size; }
 
@@ -374,6 +402,13 @@ function renderEditor() {
   const m = state.member();
   $("#editor").classList.toggle("hidden", !m); $("#editorEmpty").classList.toggle("hidden", !!m);
   if (!m) return;
+  // 部屋モード：他人の投稿は閲覧のみ
+  const mine = isMine(m);
+  document.querySelector(".editor").classList.toggle("ro", !mine);
+  $("#roBanner").classList.toggle("hidden", mine); $("#roWho").textContent = (m.name || "(名前なし)") + (m.role ? "・" + m.role : "");
+  for (const id of ["#mName", "#mRole", "#mColor", "#mPack"]) $(id).disabled = !mine;
+  for (const id of ["#btnUp", "#btnDown", "#btnClear", "#btnDelMember"]) $(id).classList.toggle("hidden", !mine);
+  $("#btnDup").textContent = mine ? "複製" : "コピーして自分用に編集";
   if (document.activeElement !== $("#mName")) $("#mName").value = m.name;
   if (document.activeElement !== $("#mRole")) $("#mRole").value = m.role;
   $("#mColor").value = m.color;
@@ -404,16 +439,19 @@ function slotEl(m, z, i, x) {
     d.addEventListener("mouseenter", e => showTip(it, d)); d.addEventListener("mouseleave", hideTip);
   }
   if (moveSrc && moveSrc.z === z && moveSrc.i === i) d.classList.add("selected");
+  const ro = () => { if (isMine(m)) return false; toast("他の人の投稿は閲覧のみです（「コピーして自分用に編集」が使えます）"); return true; };
+  if (!isMine(m)) d.draggable = false;
   d.addEventListener("click", e => {
     if (document.body.classList.contains("raid")) return;
+    if (ro()) return;
     if (moveSrc) { swap(m, moveSrc.z, moveSrc.i, z, i); moveSrc = null; return; }
     if (x) openPop(m, z, i, d); else openPicker(sel => setSlot(m, z, i, sel));
   });
-  d.addEventListener("contextmenu", e => { e.preventDefault(); if (x) { m[z][i] = null; state.save(); renderAll(); } });
-  d.addEventListener("dragstart", e => { e.dataTransfer.setData("text/plain", JSON.stringify({ z, i })); e.dataTransfer.effectAllowed = "move"; hideTip(); });
-  d.addEventListener("dragover", e => { e.preventDefault(); d.classList.add("dragover"); });
+  d.addEventListener("contextmenu", e => { e.preventDefault(); if (x && !ro()) { m[z][i] = null; state.save(); renderAll(); } });
+  d.addEventListener("dragstart", e => { if (!isMine(m)) { e.preventDefault(); return; } e.dataTransfer.setData("text/plain", JSON.stringify({ z, i })); e.dataTransfer.effectAllowed = "move"; hideTip(); });
+  d.addEventListener("dragover", e => { if (!isMine(m)) return; e.preventDefault(); d.classList.add("dragover"); });
   d.addEventListener("dragleave", () => d.classList.remove("dragover"));
-  d.addEventListener("drop", e => { e.preventDefault(); d.classList.remove("dragover"); try { const s = JSON.parse(e.dataTransfer.getData("text/plain")); swap(m, s.z, s.i, z, i); } catch (err) { } });
+  d.addEventListener("drop", e => { e.preventDefault(); d.classList.remove("dragover"); if (!isMine(m)) return; try { const s = JSON.parse(e.dataTransfer.getData("text/plain")); swap(m, s.z, s.i, z, i); } catch (err) { } });
   return d;
 }
 function swap(m, z1, i1, z2, i2) { if (z1 === z2 && i1 === i2) { renderAll(); return; } const a = m[z1][i1]; m[z1][i1] = m[z2][i2]; m[z2][i2] = a; state.save(); renderAll(); }
@@ -580,9 +618,10 @@ $("#tmCopy").addEventListener("click", e => copyText($("#tmText").value, e.curre
 $("#tmodal").addEventListener("mousedown", e => { if (e.target === $("#tmodal")) $("#tmodal").classList.add("hidden"); });
 
 $("#btnShare").addEventListener("click", async () => {
+  if (isRoom()) { showRoomLink(); return; }
   const p = state.plan(); const code = await encodePlan(p);
   const url = location.origin + location.pathname + "#s=" + code;
-  openText("共有リンク", `このURLをメンバーに送ると、同じ計画が開けます（データはURLに含まれ、サーバには保存されません）。長さ: ${url.length} 文字`, url, null);
+  openText("共有リンク（この時点のコピー）", `このURLをメンバーに送ると、同じ計画が開けます（データはURLに含まれ、サーバには保存されません）。長さ: ${url.length} 文字<br>みんなで同時に編集したい場合は「🌐 オンライン部屋を作る」を使ってください。`, url, null);
 });
 $("#btnExport").addEventListener("click", () => {
   const p = state.plan(); const json = JSON.stringify({ v: 1, name: p.name, members: p.members }, null, 2);
@@ -605,7 +644,7 @@ async function handleHash() {
 
 /* ============ header / members actions ============ */
 $("#planSel").addEventListener("change", e => { state.data.current = e.target.value; state.sel = (state.plan().members[0] || {}).id || null; state.save(); renderAll(); });
-$("#planName").addEventListener("input", e => { state.plan().name = e.target.value; state.save(); renderMembers(); });
+$("#planName").addEventListener("input", e => { state.plan().name = e.target.value; if (isRoom()) syncRoomName(e.target.value); else state.save(); renderMembers(); });
 $("#btnNewPlan").addEventListener("click", () => { const p = emptyPlan("レイド計画 " + (state.data.plans.length + 1)); state.data.plans.push(p); state.data.current = p.id; state.sel = null; state.save(); renderAll(); });
 $("#btnDelPlan").addEventListener("click", () => { const p = state.plan(); if (!confirm(`計画「${p.name}」を削除しますか？`)) return; state.data.plans = state.data.plans.filter(x => x.id !== p.id); if (!state.data.plans.length) state.data.plans.push(emptyPlan()); state.data.current = state.data.plans[0].id; state.sel = (state.plan().members[0] || {}).id || null; state.save(); renderAll(); });
 $("#btnAddMember").addEventListener("click", () => { const m = emptyMember("", ""); state.plan().members.push(m); state.sel = m.id; state.save(); renderAll(); setTimeout(() => $("#mName").focus(), 0); });
@@ -625,11 +664,26 @@ $("#btnTemplate").addEventListener("click", e => {
 $("#mName").addEventListener("input", e => { const m = state.member(); if (m) { m.name = e.target.value; state.save(); renderMembers(); } });
 $("#mRole").addEventListener("input", e => { const m = state.member(); if (m) { m.role = e.target.value; state.save(); renderMembers(); } });
 $("#mColor").addEventListener("input", e => { const m = state.member(); if (m) { m.color = e.target.value; state.save(); renderMembers(); } });
-$("#btnDup").addEventListener("click", () => { const m = state.member(); if (!m) return; const c = JSON.parse(JSON.stringify(m)); c.id = uid(); c.name = (m.name || "") + " (複製)"; c.color = COLORS[state.plan().members.length % COLORS.length]; state.plan().members.push(c); state.sel = c.id; state.save(); renderAll(); });
+function copyMember() {
+  const m = state.member(); if (!m) return;
+  const mine = isMine(m); const c = JSON.parse(JSON.stringify(m)); const fresh = emptyMember();   // id/uid/order/createdAt を新規に
+  for (const z in ZONES) c[z] = fresh[z].map((_, i) => m[z][i] ? { ...m[z][i] } : null);
+  c.id = fresh.id; c.uid = fresh.uid; c.order = fresh.order; c.createdAt = fresh.createdAt;
+  c.name = (m.name || "") + (mine ? " (複製)" : " (コピー)"); c.color = COLORS[state.plan().members.length % COLORS.length];
+  state.plan().members.push(c); state.sel = c.id; state.save(); renderAll();
+  if (!mine) toast("自分用にコピーしました。自由に編集できます");
+}
+$("#btnDup").addEventListener("click", copyMember);
+$("#btnCopyMine").addEventListener("click", copyMember);
 $("#btnUp").addEventListener("click", () => moveMember(-1)); $("#btnDown").addEventListener("click", () => moveMember(1));
-function moveMember(d) { const ms = state.plan().members; const i = ms.findIndex(x => x.id === state.sel); const j = i + d; if (i < 0 || j < 0 || j >= ms.length) return; [ms[i], ms[j]] = [ms[j], ms[i]]; state.save(); renderAll(); }
-$("#btnClear").addEventListener("click", () => { const m = state.member(); if (m && confirm("この参加者のアイテムを全て消去しますか？")) { for (const z in ZONES) m[z] = Array(ZONES[z]).fill(null); state.save(); renderAll(); } });
-$("#btnDelMember").addEventListener("click", () => { const m = state.member(); if (m && confirm(`「${m.name || "(名前なし)"}」を削除しますか？`)) { const ms = state.plan().members; const i = ms.findIndex(x => x.id === m.id); ms.splice(i, 1); state.sel = (ms[i] || ms[i - 1] || {}).id || null; state.save(); renderAll(); } });
+function moveMember(d) {
+  const ms = state.plan().members; const i = ms.findIndex(x => x.id === state.sel); const j = i + d; if (i < 0 || j < 0 || j >= ms.length) return;
+  if (isRoom()) { const me = ms[i]; if (!isMine(me)) return; const a = ms[j].order ?? 0; const b = ms[j + d] ? (ms[j + d].order ?? 0) : a + d * 2; me.order = (a + b) / 2; ms.sort((x, y) => (x.order ?? 0) - (y.order ?? 0)); }
+  else [ms[i], ms[j]] = [ms[j], ms[i]];
+  state.save(); renderAll();
+}
+$("#btnClear").addEventListener("click", () => { const m = state.member(); if (m && isMine(m) && confirm("この参加者のアイテムを全て消去しますか？")) { for (const z in ZONES) m[z] = Array(ZONES[z]).fill(null); state.save(); renderAll(); } });
+$("#btnDelMember").addEventListener("click", () => { const m = state.member(); if (m && isMine(m) && confirm(`「${m.name || "(名前なし)"}」を削除しますか？`)) { const ms = state.plan().members; const i = ms.findIndex(x => x.id === m.id); ms.splice(i, 1); state.sel = (ms[i] || ms[i - 1] || {}).id || null; if (isRoom()) syncDelete(m.id); state.save(); renderAll(); } });
 $("#tabMe").addEventListener("click", () => { state.tab = "me"; renderSummary(); renderConv(); });
 $("#tabAll").addEventListener("click", () => { state.tab = "all"; renderSummary(); renderConv(); });
 $("#btnResetChecks").addEventListener("click", () => { const m = state.member(); delete state.checks[checkKey(state.tab === "all" ? null : (m && m.id))]; state.saveChecks(); renderSummary(); });
@@ -637,7 +691,110 @@ for (const id of ["#optQty", "#optChunk", "#optWear", "#optPack"]) $(id).addEven
 $("#btnRaid").addEventListener("click", () => { const on = document.body.classList.toggle("raid"); $("#btnRaid").textContent = on ? "✎ 編集に戻る" : "⚔ レイド表示"; closePop(); moveSrc = null; renderAll(); });
 document.addEventListener("keydown", e => { if (e.key === "Escape") { closePop(); if (moveSrc) { moveSrc = null; renderAll(); } } });
 
-function renderAll() { renderMembers(); renderEditor(); renderSummary(); renderConv(); }
+function renderAll() { renderMembers(); renderEditor(); renderSummary(); renderConv(); renderRoomBar(); }
+
+/* ============ online room (Firebase Firestore + 匿名認証) ============
+ * URL ?room=ID を開くだけで参加。ログイン・パスワード無し。
+ * 各投稿(member)は作成したブラウザ（匿名uid）だけが編集・削除でき、他の人は閲覧＋コピー。
+ * 設定は firebase-config.js（window.FIREBASE_CONFIG）。無ければボタン非表示でローカル動作。 */
+const FB_VER = "10.14.1";
+const sync = { cfg: (typeof window.FIREBASE_CONFIG === "object" && window.FIREBASE_CONFIG && window.FIREBASE_CONFIG.projectId) ? window.FIREBASE_CONFIG : null,
+  room: null, plan: null, roomDoc: null, uid: null, authed: false, fs: null, db: null, unsubM: null, unsubR: null, status: "off", timers: new Map(), last: new Map(), nameTimer: null };
+function isRoom() { return !!sync.room; }
+function isMine(m) { return !isRoom() || (m && m.uid === sync.uid); }
+function localUid() { try { let u = localStorage.getItem("rrp.uid"); if (!u) { u = "local-" + uid() + uid(); localStorage.setItem("rrp.uid", u); } return u; } catch (e) { return "local-" + uid(); } }
+async function fbInit() {
+  if (sync.db) return true; if (!sync.cfg) return false;
+  setRoomStatus("busy");
+  const base = `https://www.gstatic.com/firebasejs/${FB_VER}/`;
+  const [appM, authM, fsM] = await Promise.all([import(base + "firebase-app.js"), import(base + "firebase-auth.js"), import(base + "firebase-firestore.js")]);
+  const app = appM.getApps().length ? appM.getApp() : appM.initializeApp(sync.cfg);
+  sync.fs = fsM; sync.db = fsM.getFirestore(app);
+  try { const auth = authM.getAuth(app); const cred = await authM.signInAnonymously(auth); sync.uid = cred.user.uid; sync.authed = true; }
+  catch (e) { console.warn("匿名認証が使えません（Firebaseコンソールで Anonymous を有効化してください）:", e.code || e); sync.uid = localUid(); sync.authed = false; }
+  return true;
+}
+function memberPayload(m) { return { uid: m.uid || sync.uid, name: m.name || "", role: m.role || "", color: m.color || COLORS[0], pack: PACKS[m.pack] ? m.pack : "none", belt: m.belt, main: m.main, wear: m.wear, bag: m.bag, order: m.order ?? 0, createdAt: m.createdAt ?? Date.now(), updatedAt: Date.now() }; }
+function normMember(id, d) {
+  const m = { id, uid: d.uid || "", name: d.name || "", role: d.role || "", color: d.color || COLORS[0], pack: PACKS[d.pack] ? d.pack : "none", order: d.order ?? 0, createdAt: d.createdAt ?? 0, belt: [], main: [], wear: [], bag: [] };
+  for (const z in ZONES) { m[z] = (Array.isArray(d[z]) ? d[z] : []).slice(0, ZONES[z]).map(x => x && x.s && item(x.s) ? { s: x.s, q: Math.max(1, +x.q || 1) } : null); while (m[z].length < ZONES[z]) m[z].push(null); }
+  return m;
+}
+function setRoomStatus(s) { sync.status = s; renderRoomBar(); }
+function renderRoomBar() {
+  const on = isRoom(); document.body.classList.toggle("room", on); $("#roombar").classList.toggle("hidden", !on);
+  $("#btnRoom").classList.toggle("hidden", !sync.cfg || on);
+  if (!on) return;
+  $("#roomName").textContent = "「" + ((sync.plan && sync.plan.name) || "…") + "」";
+  const st = $("#roomStatus"); st.className = "live " + (sync.status === "err" ? "err" : sync.status === "busy" ? "busy" : "");
+  st.title = { on: "同期中", busy: "接続中…", err: "同期エラー", off: "未接続" }[sync.status] || "";
+  st.textContent = sync.status === "on" ? "● 同期中" : sync.status === "busy" ? "● 接続中…" : sync.status === "err" ? "● エラー" : "●";
+}
+function roomUrl() { return location.origin + location.pathname + "?room=" + sync.room; }
+function showRoomLink() { openText("部屋のURL（同時編集）", "このURLを送るだけで、メンバーは同じ部屋を開いて自分の投稿を追加・編集できます（パスワード不要）。", roomUrl(), null); }
+async function joinRoom(id) {
+  if (!(await fbInit())) { toast("オンライン機能は未設定です（firebase-config.js）"); return false; }
+  leaveRoom(true);
+  sync.room = id; sync.plan = { id: "room:" + id, name: "レイド計画", members: [] }; sync.last.clear();
+  const { doc, collection, onSnapshot } = sync.fs;
+  sync.unsubR = onSnapshot(doc(sync.db, "rustraid_rooms", id), s => { sync.roomDoc = s.exists() ? s.data() : null; if (sync.roomDoc && document.activeElement !== $("#planName")) sync.plan.name = sync.roomDoc.name || "レイド計画"; renderMembers(); renderRoomBar(); }, e => { setRoomStatus("err"); });
+  sync.unsubM = onSnapshot(collection(sync.db, "rustraid_rooms", id, "members"), s => {
+    const cur = new Map(sync.plan.members.map(m => [m.id, m]));
+    const ms = []; s.forEach(d => { const local = cur.get(d.id); ms.push(local && sync.timers.has(d.id) ? local : normMember(d.id, d.data())); }); // 送信待ちの自分の変更は上書きしない
+    for (const [id, m] of cur) if (sync.timers.has(id) && !ms.some(x => x.id === id)) ms.push(m);   // 作成直後でまだサーバに無いもの
+    ms.sort((a, b) => (a.order - b.order) || (a.createdAt - b.createdAt));
+    sync.plan.members = ms;
+    for (const m of ms) if (isMine(m) && !sync.timers.has(m.id)) sync.last.set(m.id, JSON.stringify(memberPayload({ ...m, updatedAt: 0 })).replace(/"updatedAt":\d+/, ""));
+    if (!ms.some(m => m.id === state.sel)) state.sel = (ms.find(m => isMine(m)) || ms[0] || {}).id || null;
+    setRoomStatus("on"); renderAll();
+  }, e => { setRoomStatus("err"); toast("同期エラー: " + (e.code || e.message)); });
+  const u = new URL(location.href); u.searchParams.set("room", id); u.hash = ""; history.replaceState(null, "", u);
+  closePop(); moveSrc = null; state.tab = "me"; renderAll(); return true;
+}
+function leaveRoom(silent) {
+  if (sync.unsubM) sync.unsubM(); if (sync.unsubR) sync.unsubR(); sync.unsubM = sync.unsubR = null;
+  for (const t of sync.timers.values()) clearTimeout(t); sync.timers.clear(); sync.last.clear();
+  sync.room = null; sync.plan = null; sync.roomDoc = null; sync.status = "off";
+  if (!silent) { const u = new URL(location.href); u.searchParams.delete("room"); history.replaceState(null, "", u); state.sel = (state.plan().members[0] || {}).id || null; renderAll(); }
+}
+function payloadKey(m) { return JSON.stringify(memberPayload({ ...m, updatedAt: 0 })).replace(/"updatedAt":\d+/, ""); }
+function syncPushDirty() {
+  if (!isRoom() || !sync.db) return;
+  const ids = new Set();
+  for (const m of sync.plan.members) {
+    if (!isMine(m)) continue; ids.add(m.id);
+    const k = payloadKey(m); if (sync.last.get(m.id) === k) continue;
+    sync.last.set(m.id, k);
+    clearTimeout(sync.timers.get(m.id));
+    sync.timers.set(m.id, setTimeout(async () => {
+      sync.timers.delete(m.id);
+      try { setRoomStatus("busy"); await sync.fs.setDoc(sync.fs.doc(sync.db, "rustraid_rooms", sync.room, "members", m.id), memberPayload(m)); setRoomStatus("on"); }
+      catch (e) { setRoomStatus("err"); toast("保存できませんでした: " + (e.code || e.message)); }
+    }, 400));
+  }
+}
+async function syncDelete(id) {
+  clearTimeout(sync.timers.get(id)); sync.timers.delete(id); sync.last.delete(id);
+  try { await sync.fs.deleteDoc(sync.fs.doc(sync.db, "rustraid_rooms", sync.room, "members", id)); } catch (e) { toast("削除できませんでした: " + (e.code || e.message)); }
+}
+function syncRoomName(name) {
+  clearTimeout(sync.nameTimer);
+  sync.nameTimer = setTimeout(async () => { try { await sync.fs.updateDoc(sync.fs.doc(sync.db, "rustraid_rooms", sync.room), { name }); } catch (e) { toast("名前を変更できませんでした: " + (e.code || e.message)); } }, 500);
+}
+async function createRoom() {
+  if (!(await fbInit())) return;
+  const p = state.plan(); const id = (uid() + uid()).slice(0, 10);
+  try {
+    const { doc, setDoc } = sync.fs;
+    await setDoc(doc(sync.db, "rustraid_rooms", id), { name: p.name || "レイド計画", createdBy: sync.uid, createdAt: Date.now() });
+    let order = 1; for (const m of p.members) await setDoc(doc(sync.db, "rustraid_rooms", id, "members", m.id), memberPayload({ ...m, uid: sync.uid, order: order++, createdAt: Date.now() }));
+  } catch (e) { setRoomStatus("off"); toast("部屋を作れませんでした: " + (e.code || e.message)); return; }
+  await joinRoom(id); showRoomLink();
+}
+$("#btnRoom").addEventListener("click", () => { const p = state.plan(); if (confirm(`現在の計画「${p.name}」（${p.members.length}人）をオンライン部屋にします。よろしいですか？`)) createRoom(); });
+$("#btnRoomUrl").addEventListener("click", e => copyText(roomUrl(), e.currentTarget));
+$("#btnRoomLeave").addEventListener("click", () => { leaveRoom(false); toast("ローカルの計画に戻りました"); });
+window.addEventListener("beforeunload", () => { for (const [id, t] of sync.timers) { clearTimeout(t); const m = sync.plan && sync.plan.members.find(x => x.id === id); if (m && sync.fs) sync.fs.setDoc(sync.fs.doc(sync.db, "rustraid_rooms", sync.room, "members", id), memberPayload(m)); } });
 
 /* ============ boot ============ */
 (async function boot() {
@@ -651,6 +808,8 @@ function renderAll() { renderMembers(); renderEditor(); renderSummary(); renderC
   renderAll();
   // 既に開いているタブで共有リンクを踏んだ場合（ハッシュだけ変わる＝再読込なし）も取り込む
   window.addEventListener("hashchange", handleHash);
+  const rid = new URLSearchParams(location.search).get("room");
+  if (rid) { if (!(await joinRoom(rid))) { const u = new URL(location.href); u.searchParams.delete("room"); history.replaceState(null, "", u); } }
 })();
 </script>
 </body>

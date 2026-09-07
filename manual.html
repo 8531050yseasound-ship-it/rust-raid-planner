@@ -56,7 +56,7 @@ footer{margin-top:40px;color:var(--dim);font-size:12px;border-top:1px solid var(
   <li><a href="#pack">バックパックを背負う／中身</a></li>
   <li><a href="#raid">レイド当日の使い方（レイド表示・準備リスト）</a></li>
   <li><a href="#conveyor">工業用コンベアへ貼り付ける</a></li>
-  <li><a href="#share">メンバーへの共有・バックアップ</a></li>
+  <li><a href="#share">メンバーへの共有（オンライン部屋・共有リンク）</a></li>
   <li><a href="#ops">運用：データ保存場所・公開・月次更新</a></li>
   <li><a href="#faq">困ったとき</a></li>
   <li><a href="#legal">権利表記</a></li>
@@ -143,6 +143,21 @@ footer{margin-top:40px;color:var(--dim);font-size:12px;border-top:1px solid var(
 <div class="box"><b>使い方の例</b>：レイド前に「準備箱」を作り、共用倉庫→コンベア→準備箱と配管。各役割のJSONを貼ったコンベアを動かすと、必要な数だけが準備箱に自動で集まります。</div>
 
 <h2 id="share">7. メンバーへの共有・バックアップ</h2>
+<h3>🌐 オンライン部屋（みんなで同時編集・おすすめ）</h3>
+<div class="box ok"><b>使い方</b>：管理者が「🌐 オンライン部屋を作る」→ 表示されたURL（<code>…/?room=xxxxxxxxxx</code>）をメンバーに送るだけ。
+受け取った人は<b>URLを開くだけ</b>で参加でき、パスワードもログインも不要です。</div>
+<table>
+<tr><th>できること</th><th>説明</th></tr>
+<tr><td>自分の投稿</td><td>「＋ 追加」「テンプレ」で作った役割は<b>自分の投稿</b>（左の一覧に「自分」バッジ）。編集した内容は自動保存され、部屋を開いている全員の画面に数秒以内に反映されます</td></tr>
+<tr><td>他の人の投稿</td><td>「閲覧」バッジ。見ることはできますが編集はできません。「<b>コピーして自分用に編集</b>」を押すと、同じ中身の自分の投稿ができて自由に編集できます</td></tr>
+<tr><td>全員合計・コンベア</td><td>準備リストの「全員合計」と、コンベア書出の全員分は、部屋にいる全員の投稿を合計します</td></tr>
+<tr><td>部屋の名前</td><td>部屋を作った人だけが変更できます</td></tr>
+<tr><td>退出</td><td>「退出（ローカルへ）」で自分のPC内の計画に戻ります（部屋のデータは消えません。URLを開けばまた参加できます）</td></tr>
+</table>
+<div class="box warn"><b>「自分」の判定について</b>：ブラウザごとに自動で作られる匿名IDで判定します（入力不要）。
+そのため <b>別の端末や別のブラウザで開くと、自分の投稿が「閲覧」扱い</b>になります。その場合は「コピーして自分用に編集」で引き継ぎ、古い方はそのままにしてください（作った端末からなら削除できます）。ブラウザのサイトデータを消した場合も同様です。</div>
+
+<h3>スナップショット共有（サーバなし）</h3>
 <table>
 <tr><th>方法</th><th>説明</th></tr>
 <tr><td>🔗 共有リンク</td><td>計画全体を圧縮してURLに埋め込みます（サーバ保存なし）。Discord等で送れば、受け取った人はそのURLを開くだけで「新しい計画」として取り込まれます。あとで編集しても相手側には反映されないので、更新したら再度リンクを送ってください</td></tr>
@@ -152,6 +167,37 @@ footer{margin-top:40px;color:var(--dim);font-size:12px;border-top:1px solid var(
 <div class="box warn"><b>データの保存場所</b>：計画はブラウザの localStorage に保存されます（PC・ブラウザごとに別。同じPCでも別ブラウザには引き継がれません）。ブラウザのサイトデータを消すと消えるので、大事な計画は「書出」でバックアップしてください。</div>
 
 <h2 id="ops">8. 運用（管理者向け）</h2>
+<h3>オンライン部屋の初期設定（1回だけ・Firebase 無料枠）</h3>
+<p>同時編集は Google の Firebase（Firestore）を使います。Life Planner と同じプロジェクトを流用できます。設定は3ステップです。</p>
+<ol>
+  <li><b>firebaseConfig を貼る</b>：Firebase コンソール → ⚙ プロジェクトの設定 → 「マイアプリ」→ SDK の設定と構成 に出る <code>firebaseConfig = { apiKey: "...", projectId: "...", ... }</code> の中身を、リポジトリの <code>firebase-config.js</code> に貼る：
+<pre><code>window.FIREBASE_CONFIG = {
+  apiKey: "AIza...",
+  authDomain: "xxxx.firebaseapp.com",
+  projectId: "xxxx",
+  storageBucket: "xxxx.appspot.com",
+  messagingSenderId: "...",
+  appId: "..."
+};</code></pre>
+（Life Planner の設定画面「ふたりで同期」に貼った構成と同じもの。Web用APIキーは公開しても問題ない種類で、保護はルールで行います）</li>
+  <li><b>匿名ログインを有効化</b>：Firebase コンソール → Authentication → Sign-in method → 「匿名」を有効にする。これで利用者は何も入力せずに「自分」を識別できます</li>
+  <li><b>Firestore ルールを貼る</b>：Firestore Database → ルール に、既存のルールの <code>match /databases/{database}/documents {</code> の内側へ次を追加して「公開」：
+<pre><code>match /rustraid_rooms/{room} {
+  allow read: if true;
+  allow create: if request.auth != null &amp;&amp; request.resource.data.createdBy == request.auth.uid;
+  allow update: if request.auth != null &amp;&amp; resource.data.createdBy == request.auth.uid;
+  allow delete: if request.auth != null &amp;&amp; resource.data.createdBy == request.auth.uid;
+  match /members/{member} {
+    allow read: if true;
+    allow create: if request.auth != null &amp;&amp; request.resource.data.uid == request.auth.uid;
+    allow update: if request.auth != null &amp;&amp; resource.data.uid == request.auth.uid &amp;&amp; request.resource.data.uid == request.auth.uid;
+    allow delete: if request.auth != null &amp;&amp; resource.data.uid == request.auth.uid;
+  }
+}</code></pre>
+このルールで「誰でも閲覧・自分の投稿だけ書き換え可」がサーバ側でも保証されます（UIだけの制限ではなくなります）。</li>
+</ol>
+<p><code>firebase-config.js</code> を <code>git push</code> すると、公開サイトに「🌐 オンライン部屋を作る」ボタンが現れます。設定前はボタンが出ず、ローカル＋共有リンクだけで動きます。</p>
+<div class="box"><b>データの置き場所</b>：Firestore の <code>rustraid_rooms/{部屋ID}</code>（名前・作成者）と <code>rustraid_rooms/{部屋ID}/members/{投稿ID}</code>（各投稿。uid＝作成者の匿名ID）。無料枠（1日 読み取り5万・書き込み2万）で十分です。部屋を丸ごと消したいときは Firestore コンソールでその部屋のドキュメントを削除します。</div>
 <h3>ファイル構成</h3>
 <table>
 <tr><th>ファイル</th><th>役割</th></tr>

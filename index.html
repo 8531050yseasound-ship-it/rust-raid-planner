@@ -100,6 +100,24 @@ body.raid .slot .n{display:block}
 .tabs button{padding:4px 10px;font-size:12px}
 .tabs button.on{background:var(--accent);border-color:var(--accent);color:#fff}
 
+/* palette */
+.palette{margin-bottom:14px}
+.palette h2 .k{font-size:11px;color:var(--dim);text-transform:none;letter-spacing:0;font-weight:400}
+.palette input[type=search]{width:100%;margin-bottom:6px}
+.plcats{padding:0 0 6px;border:0;gap:3px}
+.plcats button{padding:2px 7px;font-size:11px}
+.plgrid{display:grid;grid-template-columns:repeat(auto-fill,46px);gap:4px;max-height:38vh;overflow:auto;padding:4px;border:1px solid var(--line);border-radius:6px;background:var(--bg2);justify-content:start}
+.plgrid.dragover{outline:2px dashed var(--bad);outline-offset:-2px}
+.pli{width:46px;height:46px;border:1px solid var(--slotb);border-radius:6px;background:var(--slot);display:flex;align-items:center;justify-content:center;cursor:grab;position:relative}
+.pli:hover{border-color:var(--accent2)}
+.pli.selected{outline:2px solid var(--accent);outline-offset:-2px}
+.pli img{width:84%;height:84%;object-fit:contain;pointer-events:none}
+.pli:active{cursor:grabbing}
+.palette.collapsed #plBody{display:none}
+body.raid .palette{display:none}
+.slot.placeable{border-color:var(--accent2);box-shadow:inset 0 0 0 1px var(--accent2)}
+@media (max-width:1100px){.plgrid{max-height:220px}}
+
 /* conveyor */
 .conv .opt{display:flex;flex-wrap:wrap;gap:10px;align-items:center;font-size:12px;color:var(--muted);margin-bottom:8px}
 .conv .opt label{display:flex;align-items:center;gap:4px}
@@ -210,7 +228,7 @@ body.room .localonly{display:none!important}
       <button id="btnAddMember" class="primary small">＋ 追加</button>
       <button id="btnTemplate" class="small">テンプレ</button>
     </div>
-    <p class="help" style="margin-top:10px">役割ごとに<b>手持ち(6)</b>・<b>バッグ(24)</b>・<b>装備(8)</b>を設定します。<br>スロットをクリック→アイテム検索。ドラッグで入れ替え。右クリックで削除。</p>
+    <p class="help" style="margin-top:10px">役割ごとに<b>手持ち(6)</b>・<b>バッグ(24)</b>・<b>装備(8)</b>を設定します。<br>右の<b>アイテム一覧</b>からドラッグで配置。スロットをクリック→検索でも可。ドラッグで入れ替え。右クリックで削除。</p>
   </aside>
 
   <section class="editor panel">
@@ -242,6 +260,15 @@ body.room .localonly{display:none!important}
   </section>
 
   <aside class="right">
+    <div class="panel palette editonly" id="palette">
+      <h2>アイテム一覧 <span class="k">ドラッグしてスロットへ</span><span class="grow"></span><button id="plToggle" class="small ghost" title="折りたたむ">▲</button></h2>
+      <div id="plBody">
+        <input id="plSearch" type="search" placeholder="検索：C4 / ロケラン / ammo.rifle …" autocomplete="off">
+        <div id="plCats" class="cats plcats"></div>
+        <div id="plGrid" class="plgrid"></div>
+        <div id="plHint" class="help">アイコンを<b>ドラッグ</b>して手持ち・バッグのスロットへ。クリック→スロットをクリックでも置けます。スロットからここへドロップすると削除。</div>
+      </div>
+    </div>
     <div class="panel">
       <h2>準備リスト <span class="grow"></span><button id="btnResetChecks" class="small ghost" title="チェックを全て外す">✓ リセット</button></h2>
       <div class="tabs"><button id="tabMe" class="on">この人</button><button id="tabAll">全員合計</button></div>
@@ -441,9 +468,11 @@ function slotEl(m, z, i, x) {
   if (moveSrc && moveSrc.z === z && moveSrc.i === i) d.classList.add("selected");
   const ro = () => { if (isMine(m)) return false; toast("他の人の投稿は閲覧のみです（「コピーして自分用に編集」が使えます）"); return true; };
   if (!isMine(m)) d.draggable = false;
+  if (placeItem && isMine(m)) d.classList.add("placeable");
   d.addEventListener("click", e => {
     if (document.body.classList.contains("raid")) return;
     if (ro()) return;
+    if (placeItem) { const it = placeItem; if (!e.shiftKey) setPlaceItem(null); setSlot(m, z, i, it); return; }   // 一覧でクリックしたアイテムを置く（Shift併用で連続配置）
     if (moveSrc) { swap(m, moveSrc.z, moveSrc.i, z, i); moveSrc = null; return; }
     if (x) openPop(m, z, i, d); else openPicker(sel => setSlot(m, z, i, sel));
   });
@@ -451,9 +480,40 @@ function slotEl(m, z, i, x) {
   d.addEventListener("dragstart", e => { if (!isMine(m)) { e.preventDefault(); return; } e.dataTransfer.setData("text/plain", JSON.stringify({ z, i })); e.dataTransfer.effectAllowed = "move"; hideTip(); });
   d.addEventListener("dragover", e => { if (!isMine(m)) return; e.preventDefault(); d.classList.add("dragover"); });
   d.addEventListener("dragleave", () => d.classList.remove("dragover"));
-  d.addEventListener("drop", e => { e.preventDefault(); d.classList.remove("dragover"); if (!isMine(m)) return; try { const s = JSON.parse(e.dataTransfer.getData("text/plain")); swap(m, s.z, s.i, z, i); } catch (err) { } });
+  d.addEventListener("drop", e => {
+    e.preventDefault(); d.classList.remove("dragover"); if (!isMine(m)) return;
+    const s = e.dataTransfer.getData("application/x-rrp-item");                  // アイテム一覧からのドロップ
+    if (s && item(s)) { setSlot(m, z, i, item(s)); return; }
+    try { const src = JSON.parse(e.dataTransfer.getData("text/plain")); if (src && src.z in ZONES) swap(m, src.z, src.i, z, i); } catch (err) { }
+  });
   return d;
 }
+
+/* ============ item palette (右のアイテム一覧・ドラッグ配置) ============ */
+let plCat = "Raid", placeItem = null;
+function setPlaceItem(it) { placeItem = it; renderPalette(); renderEditor(); }
+function renderPalette() {
+  const c = $("#plCats"); c.innerHTML = "";
+  for (const k of CAT_ORDER) { if (k !== "Raid" && !ITEMS.some(i => i.c === k)) continue; c.append(el("button", { class: k === plCat ? "on" : "", onclick: () => { plCat = k; renderPalette(); } }, CAT_JP[k] || k)); }
+  c.append(el("button", { class: plCat === "All" ? "on" : "", onclick: () => { plCat = "All"; renderPalette(); } }, "すべて"));
+  const q = $("#plSearch").value; const saveCat = pkCat; pkCat = plCat; const res = searchItems(q); pkCat = saveCat;
+  const g = $("#plGrid"); g.innerHTML = "";
+  for (const it of res) {
+    const d = el("div", { class: "pli" + (placeItem && placeItem.s === it.s ? " selected" : ""), draggable: "true", title: jname(it) + (it.j ? "（" + it.n + "）" : "") }, el("img", { src: ico(it.s), alt: jname(it), loading: "lazy" }));
+    d.addEventListener("dragstart", e => { e.dataTransfer.setData("application/x-rrp-item", it.s); e.dataTransfer.setData("text/plain", it.s); e.dataTransfer.effectAllowed = "copy"; hideTip(); });
+    d.addEventListener("click", () => { const m = state.member(); if (m && !isMine(m)) { toast("他の人の投稿は閲覧のみです"); return; } setPlaceItem(placeItem && placeItem.s === it.s ? null : it); if (placeItem) toast("置きたいスロットをクリック（Shift＋クリックで連続配置）"); });
+    d.addEventListener("mouseenter", () => showTip(it, d)); d.addEventListener("mouseleave", hideTip);
+    g.append(d);
+  }
+  $("#plHint").textContent = res.length ? `${res.length}件` + (q ? "（検索中）" : "") + " ・ ドラッグでスロットへ／クリック→スロットをクリックでも配置。スロットからここへドロップで削除" : "該当なし";
+}
+$("#plSearch").addEventListener("input", renderPalette);
+$("#plSearch").addEventListener("keydown", e => { if (e.key === "Escape") { $("#plSearch").value = ""; renderPalette(); } });
+$("#plToggle").addEventListener("click", e => { const p = $("#palette"); p.classList.toggle("collapsed"); e.currentTarget.textContent = p.classList.contains("collapsed") ? "▼" : "▲"; });
+// スロット→一覧へドロップ＝削除
+$("#plGrid").addEventListener("dragover", e => { if (e.dataTransfer.types.includes("application/x-rrp-item")) return; e.preventDefault(); $("#plGrid").classList.add("dragover"); });
+$("#plGrid").addEventListener("dragleave", () => $("#plGrid").classList.remove("dragover"));
+$("#plGrid").addEventListener("drop", e => { $("#plGrid").classList.remove("dragover"); if (e.dataTransfer.getData("application/x-rrp-item")) return; e.preventDefault(); try { const src = JSON.parse(e.dataTransfer.getData("text/plain")); const m = state.member(); if (m && isMine(m) && src && src.z in ZONES) { m[src.z][src.i] = null; state.save(); renderAll(); } } catch (err) { } });
 function swap(m, z1, i1, z2, i2) { if (z1 === z2 && i1 === i2) { renderAll(); return; } const a = m[z1][i1]; m[z1][i1] = m[z2][i2]; m[z2][i2] = a; state.save(); renderAll(); }
 function setSlot(m, z, i, it) { m[z][i] = { s: it.s, q: defaultQty(it) }; state.save(); renderAll(); }
 
@@ -689,7 +749,7 @@ $("#tabAll").addEventListener("click", () => { state.tab = "all"; renderSummary(
 $("#btnResetChecks").addEventListener("click", () => { const m = state.member(); delete state.checks[checkKey(state.tab === "all" ? null : (m && m.id))]; state.saveChecks(); renderSummary(); });
 for (const id of ["#optQty", "#optChunk", "#optWear", "#optPack"]) $(id).addEventListener("change", renderConv);
 $("#btnRaid").addEventListener("click", () => { const on = document.body.classList.toggle("raid"); $("#btnRaid").textContent = on ? "✎ 編集に戻る" : "⚔ レイド表示"; closePop(); moveSrc = null; renderAll(); });
-document.addEventListener("keydown", e => { if (e.key === "Escape") { closePop(); if (moveSrc) { moveSrc = null; renderAll(); } } });
+document.addEventListener("keydown", e => { if (e.key === "Escape") { closePop(); if (moveSrc) { moveSrc = null; renderAll(); } if (placeItem) setPlaceItem(null); } });
 
 function renderAll() { renderMembers(); renderEditor(); renderSummary(); renderConv(); renderRoomBar(); }
 
@@ -805,6 +865,7 @@ window.addEventListener("beforeunload", () => { for (const [id, t] of sync.timer
   state.load();
   if (!state.sel) state.sel = (state.plan().members[0] || {}).id || null;
   await handleHash();
+  renderPalette();
   renderAll();
   // 既に開いているタブで共有リンクを踏んだ場合（ハッシュだけ変わる＝再読込なし）も取り込む
   window.addEventListener("hashchange", handleHash);

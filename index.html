@@ -561,7 +561,12 @@ async function decodePlan(str) {
 function importPlanObj(obj, asNew = true) {
   const p = emptyPlan(obj.name || "読み込んだ計画");
   for (const m of obj.members || []) { const nm = { id: uid(), name: m.name || "", role: m.role || "", color: m.color || COLORS[p.members.length % COLORS.length], pack: PACKS[m.pack] ? m.pack : "none", belt: [], main: [], wear: [], bag: [] }; for (const z in ZONES) { nm[z] = (m[z] || []).slice(0, ZONES[z]).map(x => x && item(x.s) ? { s: x.s, q: Math.max(1, +x.q || 1) } : null); while (nm[z].length < ZONES[z]) nm[z].push(null); } p.members.push(nm); }
-  if (asNew) { state.data.plans.push(p); state.data.current = p.id; } else { const cur = state.plan(); cur.name = p.name; cur.members = p.members; }
+  if (asNew) {
+    // 未使用の初期計画しか無ければ置き換える（空の計画を残さない）
+    const only = state.data.plans.length === 1 ? state.data.plans[0] : null;
+    if (only && !only.members.length && only.name === "レイド計画") state.data.plans = [];
+    state.data.plans.push(p); state.data.current = p.id;
+  } else { const cur = state.plan(); cur.name = p.name; cur.members = p.members; }
   state.sel = p.members[0] ? p.members[0].id : null; state.save(); renderAll();
 }
 function openText(title, help, text, applyFn) {
@@ -644,6 +649,8 @@ function renderAll() { renderMembers(); renderEditor(); renderSummary(); renderC
   if (!state.sel) state.sel = (state.plan().members[0] || {}).id || null;
   await handleHash();
   renderAll();
+  // 既に開いているタブで共有リンクを踏んだ場合（ハッシュだけ変わる＝再読込なし）も取り込む
+  window.addEventListener("hashchange", handleHash);
 })();
 </script>
 </body>

@@ -204,6 +204,7 @@ body.room .localonly{display:none!important}
     <a href="manual.html" class="editonly" style="font-size:12px;margin-right:4px" title="使い方と運用方法">📖 使い方</a>
     <button id="btnRaid" class="primary" title="レイド中に見やすい大きな表示に切り替え">⚔ レイド表示</button>
     <button id="btnRoom" class="editonly localonly hidden" title="みんなで同時編集できるオンライン部屋を作り、URLを共有する">🌐 オンライン部屋を作る</button>
+    <button id="btnAuth" class="editonly hidden" title="Googleアカウントでログインすると、別の端末でも自分の投稿を編集できます">Googleでログイン</button>
     <button id="btnShare" title="この計画をURLとして共有（メンバーに送る）">🔗 共有リンク</button>
     <button id="btnExport" class="editonly">💾 書出</button>
     <button id="btnImport" class="editonly localonly">📂 読込</button>
@@ -214,6 +215,7 @@ body.room .localonly{display:none!important}
 <div id="roombar" class="roombar hidden">
   <span class="live" id="roomStatus">●</span>
   <b>🌐 オンライン部屋</b> <span id="roomName"></span>
+  <span id="roomMe" class="badge" title="あなたの識別。Googleでログインすると別端末でも同じ本人として扱われます"></span>
   <span class="help">URLを開いた人は誰でも閲覧でき、<b>自分の投稿</b>だけ追加・編集・削除できます。他の人の投稿は「コピーして自分用に編集」で使えます。</span>
   <span class="grow"></span>
   <button id="btnRoomUrl" class="small primary">🔗 部屋のURLをコピー</button>
@@ -235,7 +237,7 @@ body.room .localonly{display:none!important}
     <div id="raidtabs" class="raidtabs"></div>
     <div id="editorEmpty" class="help">左の「＋ 追加」または「テンプレ」から参加者を作成してください。</div>
     <div id="editor" class="hidden">
-      <div id="roBanner" class="ro-banner hidden"><span>👀 <b id="roWho"></b> の投稿（閲覧のみ）</span><button id="btnCopyMine" class="small primary">コピーして自分用に編集</button></div>
+      <div id="roBanner" class="ro-banner hidden"><span>👀 <b id="roWho"></b> の投稿（閲覧のみ）<span id="roOwner" style="color:var(--dim)"></span></span><button id="btnCopyMine" class="small primary">コピーして自分用に編集</button></div>
       <div class="mhead">
         <input type="color" id="mColor" title="色">
         <input type="text" id="mName" placeholder="名前（例：太郎）">
@@ -410,7 +412,7 @@ function renderMembers() {
     box.append(el("div", { class: "member" + (m.id === state.sel ? " active" : ""), onclick: () => { state.sel = m.id; renderAll(); } },
       el("span", { class: "dot", style: "background:" + m.color }),
       el("span", { class: "nm" }, (m.name || "(名前なし)"), el("small", {}, m.role || "役割未設定")),
-      isRoom() ? el("span", { class: "badge" + (isMine(m) ? " mine" : "") }, isMine(m) ? "自分" : "閲覧") : null,
+      isRoom() ? el("span", { class: "badge" + (isMine(m) ? " mine" : ""), title: m.owner ? "作成者: " + m.owner : "" }, isMine(m) ? "自分" : (m.owner ? m.owner.slice(0, 6) : "閲覧")) : null,
       el("span", { class: "cnt" }, n + "種")));
   }
   // raid tabs
@@ -432,7 +434,7 @@ function renderEditor() {
   // 部屋モード：他人の投稿は閲覧のみ
   const mine = isMine(m);
   document.querySelector(".editor").classList.toggle("ro", !mine);
-  $("#roBanner").classList.toggle("hidden", mine); $("#roWho").textContent = (m.name || "(名前なし)") + (m.role ? "・" + m.role : "");
+  $("#roBanner").classList.toggle("hidden", mine); $("#roWho").textContent = (m.name || "(名前なし)") + (m.role ? "・" + m.role : ""); $("#roOwner").textContent = m.owner ? `　作成者: ${m.owner}` : "";
   for (const id of ["#mName", "#mRole", "#mColor", "#mPack"]) $(id).disabled = !mine;
   for (const id of ["#btnUp", "#btnDown", "#btnClear", "#btnDelMember"]) $(id).classList.toggle("hidden", !mine);
   $("#btnDup").textContent = mine ? "複製" : "コピーして自分用に編集";
@@ -759,24 +761,81 @@ function renderAll() { renderMembers(); renderEditor(); renderSummary(); renderC
  * 設定は firebase-config.js（window.FIREBASE_CONFIG）。無ければボタン非表示でローカル動作。 */
 const FB_VER = "10.14.1";
 const sync = { cfg: (typeof window.FIREBASE_CONFIG === "object" && window.FIREBASE_CONFIG && window.FIREBASE_CONFIG.projectId) ? window.FIREBASE_CONFIG : null,
-  room: null, plan: null, roomDoc: null, uid: null, authed: false, fs: null, db: null, unsubM: null, unsubR: null, status: "off", timers: new Map(), last: new Map(), nameTimer: null };
+  room: null, plan: null, roomDoc: null, uid: null, authed: false, user: null, auth: null, authM: null, fs: null, db: null, unsubM: null, unsubR: null, status: "off", timers: new Map(), last: new Map(), nameTimer: null };
 function isRoom() { return !!sync.room; }
 function isMine(m) { return !isRoom() || (m && m.uid === sync.uid); }
 function localUid() { try { let u = localStorage.getItem("rrp.uid"); if (!u) { u = "local-" + uid() + uid(); localStorage.setItem("rrp.uid", u); } return u; } catch (e) { return "local-" + uid(); } }
+function userName() { const u = sync.user; if (!u || u.isAnonymous) return ""; return u.displayName || (u.providerData && u.providerData[0] && u.providerData[0].displayName) || u.email || "Googleユーザー"; }
+function applyUser(u) { sync.user = u; sync.uid = u ? u.uid : localUid(); sync.authed = !!u; renderAuth(); }
 async function fbInit() {
   if (sync.db) return true; if (!sync.cfg) return false;
   setRoomStatus("busy");
   const base = `https://www.gstatic.com/firebasejs/${FB_VER}/`;
   const [appM, authM, fsM] = await Promise.all([import(base + "firebase-app.js"), import(base + "firebase-auth.js"), import(base + "firebase-firestore.js")]);
   const app = appM.getApps().length ? appM.getApp() : appM.initializeApp(sync.cfg);
-  sync.fs = fsM; sync.db = fsM.getFirestore(app);
-  try { const auth = authM.getAuth(app); const cred = await authM.signInAnonymously(auth); sync.uid = cred.user.uid; sync.authed = true; }
-  catch (e) { console.warn("匿名認証が使えません（Firebaseコンソールで Anonymous を有効化してください）:", e.code || e); sync.uid = localUid(); sync.authed = false; }
+  sync.fs = fsM; sync.db = fsM.getFirestore(app); sync.authM = authM;
+  try {
+    const auth = authM.getAuth(app); sync.auth = auth;
+    // 既存セッション（Google / 匿名）があればそれを使い、無ければ匿名で入る。ポップアップが使えない環境の Google リダイレクト戻りもここで拾う
+    let u = await new Promise(res => { const off = authM.onAuthStateChanged(auth, x => { off(); res(x); }); });
+    try {
+      const pending = localStorage.getItem("rrp.redirect") === "1"; localStorage.removeItem("rrp.redirect");
+      const rr = await authM.getRedirectResult(auth);
+      if (rr && rr.user) { u = rr.user; toast("Googleでログインしました"); }
+      else if (pending) toast("Googleログインの結果を受け取れませんでした。ブラウザのポップアップを許可して、もう一度お試しください");
+    } catch (e) { toast("Googleログインに失敗: " + (e.code || e.message)); }
+    if (!u) u = (await authM.signInAnonymously(auth)).user;
+    applyUser(u);
+    authM.onAuthStateChanged(auth, x => { if (x && sync.user && x.uid === sync.user.uid && x.isAnonymous === sync.user.isAnonymous) return; if (x) { applyUser(x); renderAll(); } });
+  } catch (e) { console.warn("匿名認証が使えません（Firebaseコンソールで Anonymous を有効化してください）:", e.code || e); applyUser(null); }
   return true;
 }
-function memberPayload(m) { return { uid: m.uid || sync.uid, name: m.name || "", role: m.role || "", color: m.color || COLORS[0], pack: PACKS[m.pack] ? m.pack : "none", belt: m.belt, main: m.main, wear: m.wear, bag: m.bag, order: m.order ?? 0, createdAt: m.createdAt ?? Date.now(), updatedAt: Date.now() }; }
+/* --- Google アカウント連携（任意・無料）。匿名ユーザーは「リンク」して uid を保ったまま Google 化する --- */
+async function loginGoogle() {
+  if (!(await fbInit()) || !sync.auth) { toast("オンライン機能は未設定です"); return; }
+  const A = sync.authM, auth = sync.auth, provider = new A.GoogleAuthProvider(); provider.setCustomParameters({ prompt: "select_account" });
+  const cur = auth.currentUser;
+  try {
+    if (cur && cur.isAnonymous) {
+      try { await A.linkWithPopup(cur, provider); await cur.reload(); applyUser(auth.currentUser); toast("Googleと連携しました（この端末の投稿はそのまま自分のものです）"); }
+      catch (e) {
+        if (e.code === "auth/credential-already-in-use" || e.code === "auth/email-already-in-use") {
+          // この Google アカウントは既に別端末で使用中 → そのアカウントに切り替える（この端末の匿名投稿は閲覧扱いになる）
+          const cred = A.GoogleAuthProvider.credentialFromError(e);
+          const mine = sync.plan ? sync.plan.members.filter(m => isMine(m)).length : 0;
+          if (mine && !confirm(`このGoogleアカウントは既に別の端末で使われています。切り替えると、この端末で作った ${mine} 件の投稿は「閲覧」扱いになります（コピーで引き継げます）。切り替えますか？`)) return;
+          const r = await A.signInWithCredential(auth, cred); applyUser(r.user); toast("Googleアカウントに切り替えました");
+        } else throw e;
+      }
+    } else { const r = await A.signInWithPopup(auth, provider); applyUser(r.user); toast("Googleでログインしました"); }
+  } catch (e) {
+    if (e.code === "auth/popup-blocked" || e.code === "auth/operation-not-supported-in-this-environment") {
+      try { localStorage.setItem("rrp.redirect", "1"); if (cur && cur.isAnonymous) await A.linkWithRedirect(cur, provider); else await A.signInWithRedirect(auth, provider); } catch (e2) { toast("ログインできませんでした: " + (e2.code || e2.message)); }
+      return;
+    }
+    if (e.code === "auth/popup-closed-by-user" || e.code === "auth/cancelled-popup-request") return;
+    toast("ログインできませんでした: " + (e.code || e.message));
+  }
+  renderAll();
+}
+async function logoutGoogle() {
+  if (!sync.auth) return;
+  if (!confirm("ログアウトすると、この端末は新しい匿名ユーザーになります（Googleで作った投稿は、再ログインすればまた編集できます）。よろしいですか？")) return;
+  try { await sync.authM.signOut(sync.auth); const u = (await sync.authM.signInAnonymously(sync.auth)).user; applyUser(u); toast("ログアウトしました"); renderAll(); }
+  catch (e) { toast("ログアウトできませんでした: " + (e.code || e.message)); }
+}
+function renderAuth() {
+  const b = $("#btnAuth"); if (!sync.cfg) { b.classList.add("hidden"); return; }
+  b.classList.remove("hidden");
+  const name = userName();
+  b.textContent = name ? "👤 " + name : "Googleでログイン"; b.classList.toggle("primary", false);
+  b.title = name ? "Googleでログイン中。クリックでログアウト" : "Googleアカウントでログインすると、別の端末でも自分の投稿を編集できます";
+  const me = $("#roomMe"); if (me) me.textContent = name ? "あなた: " + name + "（Google）" : "あなた: 匿名（この端末のみ）";
+}
+$("#btnAuth").addEventListener("click", () => { if (userName()) logoutGoogle(); else loginGoogle(); });
+function memberPayload(m) { return { uid: m.uid || sync.uid, owner: m.uid && m.uid !== sync.uid ? (m.owner || "") : userName(), name: m.name || "", role: m.role || "", color: m.color || COLORS[0], pack: PACKS[m.pack] ? m.pack : "none", belt: m.belt, main: m.main, wear: m.wear, bag: m.bag, order: m.order ?? 0, createdAt: m.createdAt ?? Date.now(), updatedAt: Date.now() }; }
 function normMember(id, d) {
-  const m = { id, uid: d.uid || "", name: d.name || "", role: d.role || "", color: d.color || COLORS[0], pack: PACKS[d.pack] ? d.pack : "none", order: d.order ?? 0, createdAt: d.createdAt ?? 0, belt: [], main: [], wear: [], bag: [] };
+  const m = { id, uid: d.uid || "", owner: d.owner || "", name: d.name || "", role: d.role || "", color: d.color || COLORS[0], pack: PACKS[d.pack] ? d.pack : "none", order: d.order ?? 0, createdAt: d.createdAt ?? 0, belt: [], main: [], wear: [], bag: [] };
   for (const z in ZONES) { m[z] = (Array.isArray(d[z]) ? d[z] : []).slice(0, ZONES[z]).map(x => x && x.s && item(x.s) ? { s: x.s, q: Math.max(1, +x.q || 1) } : null); while (m[z].length < ZONES[z]) m[z].push(null); }
   return m;
 }
@@ -784,6 +843,7 @@ function setRoomStatus(s) { sync.status = s; renderRoomBar(); }
 function renderRoomBar() {
   const on = isRoom(); document.body.classList.toggle("room", on); $("#roombar").classList.toggle("hidden", !on);
   $("#btnRoom").classList.toggle("hidden", !sync.cfg || on);
+  renderAuth();
   if (!on) return;
   $("#roomName").textContent = "「" + ((sync.plan && sync.plan.name) || "…") + "」";
   const st = $("#roomStatus"); st.className = "live " + (sync.status === "err" ? "err" : sync.status === "busy" ? "busy" : "");
@@ -871,6 +931,7 @@ window.addEventListener("beforeunload", () => { for (const [id, t] of sync.timer
   window.addEventListener("hashchange", handleHash);
   const rid = new URLSearchParams(location.search).get("room");
   if (rid) { if (!(await joinRoom(rid))) { const u = new URL(location.href); u.searchParams.delete("room"); history.replaceState(null, "", u); } }
+  else if (sync.cfg) { try { const hasSession = Object.keys(localStorage).some(k => k.startsWith("firebase:authUser")) || (await indexedDB.databases?.() || []).some(d => d.name === "firebaseLocalStorageDb"); if (hasSession) fbInit(); } catch (e) { } }   // 既にGoogleでログイン済みなら表示に反映
 })();
 </script>
 </body>

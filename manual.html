@@ -156,8 +156,13 @@ footer{margin-top:40px;color:var(--dim);font-size:12px;border-top:1px solid var(
 <tr><td>部屋の名前</td><td>部屋を作った人だけが変更できます</td></tr>
 <tr><td>退出</td><td>「退出（ローカルへ）」で自分のPC内の計画に戻ります（部屋のデータは消えません。URLを開けばまた参加できます）</td></tr>
 </table>
-<div class="box warn"><b>「自分」の判定について</b>：ブラウザごとに自動で作られる匿名IDで判定します（入力不要）。
-そのため <b>別の端末や別のブラウザで開くと、自分の投稿が「閲覧」扱い</b>になります。その場合は「コピーして自分用に編集」で引き継ぎ、古い方はそのままにしてください（作った端末からなら削除できます）。ブラウザのサイトデータを消した場合も同様です。</div>
+<div class="box"><b>「自分」の判定</b>：何もしなくてもブラウザごとの匿名IDで判定されます（入力不要）。
+<b>別の端末やスマホでも自分の投稿を編集したい人</b>は、右上の「<b>Googleでログイン</b>」を押してください（無料・Googleアカウントの名前とメールアドレスだけを使います）。
+匿名で作った投稿はログイン後もそのまま自分のものとして引き継がれ、以後はどの端末でも同じ本人として扱われます。他の人には投稿の作成者名（Googleの表示名）が見えます。</div>
+<div class="box warn"><b>注意</b>：
+①ログインせずに別の端末・別のブラウザで開くと、自分の投稿が「閲覧」扱いになります（「コピーして自分用に編集」で引き継げます）。
+②すでに別の端末で同じGoogleアカウントを使っている場合、この端末で「Googleでログイン」するとそのアカウントに切り替わり、この端末で匿名のまま作った投稿は「閲覧」扱いになります（確認ダイアログが出ます）。
+③ログインのポップアップがブロックされる環境では、ブラウザのポップアップを許可してください。</div>
 
 <h3>スナップショット共有（サーバなし）</h3>
 <table>
@@ -170,7 +175,7 @@ footer{margin-top:40px;color:var(--dim);font-size:12px;border-top:1px solid var(
 
 <h2 id="ops">8. 運用（管理者向け）</h2>
 <h3>オンライン部屋の初期設定（1回だけ・Firebase 無料枠）</h3>
-<div class="box ok"><b>設定済み（2026-09-07）</b>：Firebase プロジェクト <code>rust-d3d5e</code>（Firestore 東京リージョン・匿名ログイン有効・所有者ルール公開済み）。以下は再設定や別プロジェクトへ移すときの手順です。コンソール：<a href="https://console.firebase.google.com/project/rust-d3d5e">console.firebase.google.com/project/rust-d3d5e</a></div>
+<div class="box ok"><b>設定済み（2026-09-07）</b>：Firebase プロジェクト <code>rust-d3d5e</code>（Firestore 東京リージョン・匿名ログイン有効・Googleログイン有効・承認済みドメインに公開サイト追加済み・所有者ルール公開済み）。以下は再設定や別プロジェクトへ移すときの手順です。コンソール：<a href="https://console.firebase.google.com/project/rust-d3d5e">console.firebase.google.com/project/rust-d3d5e</a></div>
 <p>同時編集は Google の Firebase（Firestore）を使います。設定は3ステップです。</p>
 <ol>
   <li><b>firebaseConfig を貼る</b>：Firebase コンソール → ⚙ プロジェクトの設定 → 「マイアプリ」→ SDK の設定と構成 に出る <code>firebaseConfig = { apiKey: "...", projectId: "...", ... }</code> の中身を、リポジトリの <code>firebase-config.js</code> に貼る：
@@ -183,7 +188,8 @@ footer{margin-top:40px;color:var(--dim);font-size:12px;border-top:1px solid var(
   appId: "..."
 };</code></pre>
 （Life Planner の設定画面「ふたりで同期」に貼った構成と同じもの。Web用APIキーは公開しても問題ない種類で、保護はルールで行います）</li>
-  <li><b>匿名ログインを有効化</b>：Firebase コンソール → Authentication → Sign-in method → 「匿名」を有効にする。これで利用者は何も入力せずに「自分」を識別できます</li>
+  <li><b>匿名ログインを有効化</b>：Firebase コンソール → Authentication → Sign-in method → 「匿名」を有効にする。これで利用者は何も入力せずに「自分」を識別できます。<b>30日自動クリーンアップはオフのまま</b>（オンにすると匿名ユーザーの投稿の所有権が消えます）</li>
+  <li><b>Googleログインを有効化（任意）</b>：同じ画面で「Google」を有効にし、公開名とサポートメールを設定。さらに Authentication → 設定 → 承認済みドメイン に公開サイトのドメイン（<code>8531050yseasound-ship-it.github.io</code>）を追加</li>
   <li><b>Firestore ルールを貼る</b>：Firestore Database → ルール に、既存のルールの <code>match /databases/{database}/documents {</code> の内側へ次を追加して「公開」：
 <pre><code>match /rustraid_rooms/{room} {
   allow read: if true;

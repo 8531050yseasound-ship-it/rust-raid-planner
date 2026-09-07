@@ -113,6 +113,15 @@ body.raid .slot .n{display:block}
 .pli.selected{outline:2px solid var(--accent);outline-offset:-2px}
 .pli img{width:84%;height:84%;object-fit:contain;pointer-events:none}
 .pli:active{cursor:grabbing}
+.pli .star{position:absolute;right:-2px;top:-2px;width:16px;height:16px;line-height:14px;padding:0;font-size:11px;border-radius:50%;border:1px solid var(--line2);background:var(--bg2);color:var(--dim);opacity:0;cursor:pointer}
+.pli:hover .star,.pli .star.on{opacity:1}
+.pli .star.on{color:var(--warn);border-color:var(--warn)}
+.pli .star:hover{color:#fff;border-color:var(--accent2)}
+.res{position:relative}
+.res .star{position:absolute;right:6px;top:6px;font-size:13px;color:var(--dim);cursor:pointer;line-height:1}
+.res .star.on{color:var(--warn)}
+.res .star:hover{color:#fff}
+@media (hover:none){.pli .star{opacity:1}}
 .palette.collapsed #plBody{display:none}
 body.raid .palette{display:none}
 .slot.placeable{border-color:var(--accent2);box-shadow:inset 0 0 0 1px var(--accent2)}
@@ -411,6 +420,14 @@ const el = (t, a = {}, ...ch) => { const e = document.createElement(t); for (con
 const item = s => BY.get(s);
 const jname = it => it ? ((it.j && it.j[0]) || it.n) : "?";
 const mlabel = m => (m && (m.role || m.name)) || "(役割未設定)";   // 参加者は役割名だけで表す
+/* ★レイド定番：自分で追加・削除できる（ブラウザごとに保存。未設定なら items.json の既定） */
+const LS_RAID = "rrp.raidset.v1";
+let raidSet = null;
+function loadRaidSet() { try { const a = JSON.parse(localStorage.getItem(LS_RAID)); if (Array.isArray(a)) { raidSet = new Set(a.filter(s => BY.has(s))); return; } } catch (e) { } raidSet = new Set(ITEMS.filter(i => i.r).map(i => i.s)); }
+function saveRaidSet() { try { localStorage.setItem(LS_RAID, JSON.stringify([...raidSet])); } catch (e) { } }
+const isRaid = it => !!it && raidSet.has(it.s);
+function toggleRaid(it) { if (raidSet.has(it.s)) { raidSet.delete(it.s); toast(`「${jname(it)}」をレイド定番から外しました`); } else { raidSet.add(it.s); toast(`「${jname(it)}」をレイド定番に追加しました`); } saveRaidSet(); renderPalette(); if (!$("#picker").classList.contains("hidden")) renderResults(); }
+function resetRaidSet() { if (!confirm("レイド定番を初期状態（既定の一覧）に戻しますか？")) return; try { localStorage.removeItem(LS_RAID); } catch (e) { } loadRaidSet(); renderPalette(); toast("レイド定番を既定に戻しました"); }
 const ico = (s, size = 64) => `icons/${size}/${s}.png`;
 function defaultQty(it) {
   if (!it) return 1;
@@ -541,16 +558,18 @@ function renderPalette() {
   const c = $("#plCats"); c.innerHTML = "";
   for (const k of CAT_ORDER) { if (k !== "Raid" && !ITEMS.some(i => i.c === k)) continue; c.append(el("button", { class: k === plCat ? "on" : "", onclick: () => { plCat = k; renderPalette(); } }, CAT_JP[k] || k)); }
   c.append(el("button", { class: plCat === "All" ? "on" : "", onclick: () => { plCat = "All"; renderPalette(); } }, "すべて"));
+  if (plCat === "Raid") c.append(el("button", { class: "ghost", title: "レイド定番を既定の一覧に戻す", onclick: resetRaidSet }, "↺ 既定に戻す"));
   const q = $("#plSearch").value; const saveCat = pkCat; pkCat = plCat; const res = searchItems(q); pkCat = saveCat;
   const g = $("#plGrid"); g.innerHTML = "";
   for (const it of res) {
     const d = el("div", { class: "pli" + (placeItem && placeItem.s === it.s ? " selected" : ""), draggable: "true", title: jname(it) + (it.j ? "（" + it.n + "）" : "") }, el("img", { src: ico(it.s), alt: jname(it), loading: "lazy" }));
+    d.append(el("button", { class: "star" + (isRaid(it) ? " on" : ""), title: isRaid(it) ? "レイド定番から外す" : "レイド定番に追加", onclick: e => { e.stopPropagation(); toggleRaid(it); }, onmousedown: e => e.stopPropagation() }, isRaid(it) ? "★" : "☆"));
     d.addEventListener("dragstart", e => { e.dataTransfer.setData("application/x-rrp-item", it.s); e.dataTransfer.setData("text/plain", it.s); e.dataTransfer.effectAllowed = "copy"; hideTip(); });
     d.addEventListener("click", () => { const m = state.member(); if (m && !isMine(m)) { toast("他の人の投稿は閲覧のみです"); return; } setPlaceItem(placeItem && placeItem.s === it.s ? null : it); if (placeItem) toast("置きたいスロットをクリック（Shift＋クリックで連続配置）"); });
     d.addEventListener("mouseenter", () => showTip(it, d)); d.addEventListener("mouseleave", hideTip);
     g.append(d);
   }
-  $("#plHint").textContent = res.length ? `${res.length}件` + (q ? "（検索中）" : "") + " ・ ドラッグでスロットへ／クリック→スロットをクリックでも配置。スロットからここへドロップで削除" : "該当なし";
+  $("#plHint").textContent = res.length ? `${res.length}件` + (q ? "（検索中）" : "") + " ・ ドラッグでスロットへ／クリック→スロットをクリックでも配置。スロットからここへドロップで削除。☆でレイド定番に追加、★で外す" : "該当なし";
 }
 $("#plSearch").addEventListener("input", renderPalette);
 $("#plSearch").addEventListener("keydown", e => { if (e.key === "Escape") { $("#plSearch").value = ""; renderPalette(); } });
@@ -608,7 +627,7 @@ function aggregate(members, includeWear = true, includePack = true) {
       }
     }
   }
-  return [...map].map(([s, q]) => ({ it: item(s), q })).sort((a, b) => (b.it.r || 0) - (a.it.r || 0) || CAT_ORDER.indexOf(a.it.c) - CAT_ORDER.indexOf(b.it.c) || a.it.n.localeCompare(b.it.n));
+  return [...map].map(([s, q]) => ({ it: item(s), q })).sort((a, b) => (isRaid(b.it) - isRaid(a.it)) || CAT_ORDER.indexOf(a.it.c) - CAT_ORDER.indexOf(b.it.c) || a.it.n.localeCompare(b.it.n));
 }
 function checkKey(mid) { return state.plan().id + "/" + (mid || "all"); }
 function renderSummary() {
@@ -663,7 +682,7 @@ function renderCats() {
 function norm(s) { return s.toLowerCase().normalize("NFKC").replace(/[ァ-ヶ]/g, ch => String.fromCharCode(ch.charCodeAt(0) - 0x60)); } // カタカナ→ひらがな
 function searchItems(q) {
   q = norm(q.trim());
-  let pool = pkCat === "All" || q ? ITEMS : ITEMS.filter(i => pkCat === "Raid" ? i.r : i.c === pkCat);
+  let pool = pkCat === "All" || q ? ITEMS : ITEMS.filter(i => pkCat === "Raid" ? isRaid(i) : i.c === pkCat);
   if (!q) return pool.slice(0, 400);
   const scored = [];
   for (const it of pool) {
@@ -673,13 +692,14 @@ function searchItems(q) {
     else if (js.some(j => j.startsWith(q)) || nm.startsWith(q) || sn.startsWith(q)) sc = 80;
     else if (js.some(j => j.includes(q)) || nm.includes(q) || sn.includes(q)) sc = 60;
     else if (q.split(/\s+/).every(w => nm.includes(w) || sn.includes(w) || js.some(j => j.includes(w)))) sc = 40;
-    if (sc >= 0) scored.push({ it, sc: sc + (it.r ? 5 : 0) + (pkCat !== "All" && (pkCat === "Raid" ? it.r : it.c === pkCat) ? 3 : 0) });
+    if (sc >= 0) scored.push({ it, sc: sc + (isRaid(it) ? 5 : 0) + (pkCat !== "All" && (pkCat === "Raid" ? isRaid(it) : it.c === pkCat) ? 3 : 0) });
   }
   return scored.sort((a, b) => b.sc - a.sc || a.it.n.localeCompare(b.it.n)).map(x => x.it).slice(0, 300);
 }
 function renderResults() {
   const q = $("#pkSearch").value; const res = searchItems(q); const box = $("#pkResults"); box.innerHTML = "";
-  res.forEach((it, idx) => box.append(el("button", { class: "res" + (idx === pkKb ? " kb" : ""), onclick: () => pick(it) }, el("img", { src: ico(it.s), loading: "lazy", alt: "" }), el("span", { class: "nm" }, jname(it), el("small", {}, it.j ? it.n : it.s)))));
+  res.forEach((it, idx) => box.append(el("button", { class: "res" + (idx === pkKb ? " kb" : ""), onclick: () => pick(it) }, el("img", { src: ico(it.s), loading: "lazy", alt: "" }), el("span", { class: "nm" }, jname(it), el("small", {}, it.j ? it.n : it.s)),
+    el("span", { class: "star" + (isRaid(it) ? " on" : ""), title: isRaid(it) ? "レイド定番から外す" : "レイド定番に追加", onclick: e => { e.stopPropagation(); toggleRaid(it); } }, isRaid(it) ? "★" : "☆"))));
   $("#pkCount").textContent = res.length + "件";
   box._res = res;
 }
@@ -957,7 +977,7 @@ window.addEventListener("beforeunload", () => { for (const [id, t] of sync.timer
 (async function boot() {
   try {
     const r = await fetch("items.json"); if (!r.ok) throw new Error(r.status);
-    ITEMS = await r.json(); BY = new Map(ITEMS.map(i => [i.s, i]));
+    ITEMS = await r.json(); BY = new Map(ITEMS.map(i => [i.s, i])); loadRaidSet();
   } catch (e) { $("#editorEmpty").innerHTML = `<span class="warn">items.json を読み込めませんでした（${e.message}）。file:// ではなく http サーバ経由で開いてください。</span>`; $("#editorEmpty").classList.remove("hidden"); return; }
   state.load();
   if (!state.sel) state.sel = (state.plan().members[0] || {}).id || null;

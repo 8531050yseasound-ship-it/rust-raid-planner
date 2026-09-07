@@ -248,8 +248,7 @@ body.room .localonly{display:none!important}
       <div id="roBanner" class="ro-banner hidden"><span>👀 <b id="roWho"></b> の投稿（閲覧のみ）<span id="roOwner" style="color:var(--dim)"></span></span><button id="btnCopyMine" class="small primary">コピーして自分用に編集</button></div>
       <div class="mhead">
         <input type="color" id="mColor" title="色">
-        <input type="text" id="mName" placeholder="名前（例：太郎）">
-        <input type="text" id="mRole" placeholder="役割（例：爆破担当）">
+        <input type="text" id="mRole" placeholder="役割（例：爆破担当、ビルダー、前衛）" style="width:260px">
         <span class="grow"></span>
         <button id="btnDup" class="small">複製</button>
         <button id="btnUp" class="small" title="上へ">▲</button>
@@ -380,6 +379,7 @@ function emptyMember(name, role, color) {
 function emptyPlan(name) { return { id: uid(), name: name || "レイド計画", updated: Date.now(), stack: 1, members: [] }; }
 // 旧データ移行：pack 設定を装備の特別枠へ／特別枠の中身から pack を導出
 function migratePack(m) {
+  if (!m.role && m.name) m.role = m.name; m.name = "";          // 旧データ：名前欄しか無いものは役割名として扱う
   m.wear = m.wear || []; while (m.wear.length < ZONES.wear) m.wear.push(null);
   m.wear.forEach((x, i) => { if (i !== WEAR_SPECIAL && x && SPECIAL_WEAR.has(x.s)) { if (!m.wear[WEAR_SPECIAL]) m.wear[WEAR_SPECIAL] = { s: x.s, q: 1 }; m.wear[i] = null; } });
   if (!m.wear[WEAR_SPECIAL] && PACKS[m.pack] && PACKS[m.pack].s) m.wear[WEAR_SPECIAL] = { s: PACKS[m.pack].s, q: 1 };
@@ -410,6 +410,7 @@ const $ = s => document.querySelector(s);
 const el = (t, a = {}, ...ch) => { const e = document.createElement(t); for (const k in a) { if (k === "class") e.className = a[k]; else if (k.startsWith("on")) e.addEventListener(k.slice(2), a[k]); else if (k === "html") e.innerHTML = a[k]; else e.setAttribute(k, a[k]); } for (const c of ch) if (c != null) e.append(c); return e; };
 const item = s => BY.get(s);
 const jname = it => it ? ((it.j && it.j[0]) || it.n) : "?";
+const mlabel = m => (m && (m.role || m.name)) || "(役割未設定)";   // 参加者は役割名だけで表す
 const ico = (s, size = 64) => `icons/${size}/${s}.png`;
 function defaultQty(it) {
   if (!it) return 1;
@@ -433,13 +434,13 @@ function renderMembers() {
     const n = countItems(m);
     box.append(el("div", { class: "member" + (m.id === state.sel ? " active" : ""), onclick: () => { state.sel = m.id; renderAll(); } },
       el("span", { class: "dot", style: "background:" + m.color }),
-      el("span", { class: "nm" }, (m.name || "(名前なし)"), el("small", {}, m.role || "役割未設定")),
+      el("span", { class: "nm" }, mlabel(m)),
       isRoom() ? el("span", { class: "badge" + (isMine(m) ? " mine" : ""), title: m.owner ? "作成者: " + m.owner : "" }, isMine(m) ? "自分" : (m.owner ? m.owner.slice(0, 6) : "閲覧")) : null,
       el("span", { class: "cnt" }, n + "種")));
   }
   // raid tabs
   const rt = $("#raidtabs"); rt.innerHTML = "";
-  for (const m of p.members) rt.append(el("button", { class: m.id === state.sel ? "on" : "", style: m.id === state.sel ? `background:${m.color};border-color:${m.color}` : `border-color:${m.color}`, onclick: () => { state.sel = m.id; renderAll(); } }, `${m.name || "(名前なし)"} ・ ${m.role || ""}`));
+  for (const m of p.members) rt.append(el("button", { class: m.id === state.sel ? "on" : "", style: m.id === state.sel ? `background:${m.color};border-color:${m.color}` : `border-color:${m.color}`, onclick: () => { state.sel = m.id; renderAll(); } }, mlabel(m)));
   // header
   const ps = $("#planSel"); ps.innerHTML = ""; for (const pl of state.data.plans) ps.append(el("option", { value: pl.id }, pl.name)); if (!isRoom()) ps.value = p.id;
   if (document.activeElement !== $("#planName")) $("#planName").value = p.name;
@@ -456,11 +457,10 @@ function renderEditor() {
   // 部屋モード：他人の投稿は閲覧のみ
   const mine = isMine(m);
   document.querySelector(".editor").classList.toggle("ro", !mine);
-  $("#roBanner").classList.toggle("hidden", mine); $("#roWho").textContent = (m.name || "(名前なし)") + (m.role ? "・" + m.role : ""); $("#roOwner").textContent = m.owner ? `　作成者: ${m.owner}` : "";
-  for (const id of ["#mName", "#mRole", "#mColor", "#mPack"]) $(id).disabled = !mine;
+  $("#roBanner").classList.toggle("hidden", mine); $("#roWho").textContent = mlabel(m); $("#roOwner").textContent = m.owner ? `　作成者: ${m.owner}` : "";
+  for (const id of ["#mRole", "#mColor", "#mPack"]) $(id).disabled = !mine;
   for (const id of ["#btnUp", "#btnDown", "#btnClear", "#btnDelMember"]) $(id).classList.toggle("hidden", !mine);
   $("#btnDup").textContent = mine ? "複製" : "コピーして自分用に編集";
-  if (document.activeElement !== $("#mName")) $("#mName").value = m.name;
   if (document.activeElement !== $("#mRole")) $("#mRole").value = m.role;
   $("#mColor").value = m.color;
   for (const [z, id] of [["belt", "#zBelt"], ["main", "#zMain"], ["wear", "#zWear"]]) {
@@ -635,7 +635,7 @@ function renderConv() {
   const list = state.tab === "all" ? aggregate(p.members, wear, pack) : (m ? aggregate([m], wear, pack) : []);
   const box = $("#convBlocks"); box.innerHTML = "";
   if (!list.length) { box.append(el("div", { class: "help" }, "アイテムを設定すると、ここにコンベア用JSONが出ます。")); return; }
-  const label = state.tab === "all" ? "全員合計" : (m.name || "(名前なし)") + (m.role ? "・" + m.role : "");
+  const label = state.tab === "all" ? "全員合計" : mlabel(m);
   const blocks = []; for (let i = 0; i < list.length; i += chunk) blocks.push(list.slice(i, i + chunk));
   blocks.forEach((b, bi) => {
     const json = JSON.stringify(b.map(({ it, q }) => convEntry(it.s, useQty ? q : 0)), null, 2);
@@ -759,8 +759,7 @@ $("#planSel").addEventListener("change", e => { state.data.current = e.target.va
 $("#planName").addEventListener("input", e => { state.plan().name = e.target.value; if (isRoom()) syncRoomName(e.target.value); else state.save(); renderMembers(); });
 $("#btnNewPlan").addEventListener("click", () => { const p = emptyPlan("レイド計画 " + (state.data.plans.length + 1)); state.data.plans.push(p); state.data.current = p.id; state.sel = null; state.save(); renderAll(); });
 $("#btnDelPlan").addEventListener("click", () => { const p = state.plan(); if (!confirm(`計画「${p.name}」を削除しますか？`)) return; state.data.plans = state.data.plans.filter(x => x.id !== p.id); if (!state.data.plans.length) state.data.plans.push(emptyPlan()); state.data.current = state.data.plans[0].id; state.sel = (state.plan().members[0] || {}).id || null; state.save(); renderAll(); });
-$("#btnAddMember").addEventListener("click", () => { const m = emptyMember("", ""); state.plan().members.push(m); state.sel = m.id; state.save(); renderAll(); setTimeout(() => $("#mName").focus(), 0); });
-$("#mName").addEventListener("input", e => { const m = state.member(); if (m) { m.name = e.target.value; state.save(); renderMembers(); } });
+$("#btnAddMember").addEventListener("click", () => { const m = emptyMember("", ""); state.plan().members.push(m); state.sel = m.id; state.save(); renderAll(); setTimeout(() => $("#mRole").focus(), 0); });
 $("#mRole").addEventListener("input", e => { const m = state.member(); if (m) { m.role = e.target.value; state.save(); renderMembers(); } });
 $("#mColor").addEventListener("input", e => { const m = state.member(); if (m) { m.color = e.target.value; state.save(); renderMembers(); } });
 function copyMember() {
@@ -768,7 +767,7 @@ function copyMember() {
   const mine = isMine(m); const c = JSON.parse(JSON.stringify(m)); const fresh = emptyMember();   // id/uid/order/createdAt を新規に
   for (const z in ZONES) c[z] = fresh[z].map((_, i) => m[z][i] ? { ...m[z][i] } : null);
   c.id = fresh.id; c.uid = fresh.uid; c.order = fresh.order; c.createdAt = fresh.createdAt;
-  c.name = (m.name || "") + (mine ? " (複製)" : " (コピー)"); c.color = COLORS[state.plan().members.length % COLORS.length];
+  c.name = ""; c.role = (m.role || m.name || "") + (mine ? " (複製)" : " (コピー)"); c.color = COLORS[state.plan().members.length % COLORS.length];
   state.plan().members.push(c); state.sel = c.id; state.save(); renderAll();
   if (!mine) toast("自分用にコピーしました。自由に編集できます");
 }
@@ -782,7 +781,7 @@ function moveMember(d) {
   state.save(); renderAll();
 }
 $("#btnClear").addEventListener("click", () => { const m = state.member(); if (m && isMine(m) && confirm("この参加者のアイテムを全て消去しますか？")) { for (const z in ZONES) m[z] = Array(ZONES[z]).fill(null); state.save(); renderAll(); } });
-$("#btnDelMember").addEventListener("click", () => { const m = state.member(); if (m && isMine(m) && confirm(`「${m.name || "(名前なし)"}」を削除しますか？`)) { const ms = state.plan().members; const i = ms.findIndex(x => x.id === m.id); ms.splice(i, 1); state.sel = (ms[i] || ms[i - 1] || {}).id || null; if (isRoom()) syncDelete(m.id); state.save(); renderAll(); } });
+$("#btnDelMember").addEventListener("click", () => { const m = state.member(); if (m && isMine(m) && confirm(`「${mlabel(m)}」を削除しますか？`)) { const ms = state.plan().members; const i = ms.findIndex(x => x.id === m.id); ms.splice(i, 1); state.sel = (ms[i] || ms[i - 1] || {}).id || null; if (isRoom()) syncDelete(m.id); state.save(); renderAll(); } });
 $("#tabMe").addEventListener("click", () => { state.tab = "me"; renderSummary(); renderConv(); });
 $("#tabAll").addEventListener("click", () => { state.tab = "all"; renderSummary(); renderConv(); });
 $("#btnResetChecks").addEventListener("click", () => { const m = state.member(); delete state.checks[checkKey(state.tab === "all" ? null : (m && m.id))]; state.saveChecks(); renderSummary(); });

@@ -168,7 +168,8 @@ footer{margin-top:40px;color:var(--dim);font-size:12px;border-top:1px solid var(
 
 <h2 id="ops">8. 運用（管理者向け）</h2>
 <h3>オンライン部屋の初期設定（1回だけ・Firebase 無料枠）</h3>
-<p>同時編集は Google の Firebase（Firestore）を使います。Life Planner と同じプロジェクトを流用できます。設定は3ステップです。</p>
+<div class="box ok"><b>設定済み（2026-09-07）</b>：Firebase プロジェクト <code>rust-d3d5e</code>（Firestore 東京リージョン・匿名ログイン有効・所有者ルール公開済み）。以下は再設定や別プロジェクトへ移すときの手順です。コンソール：<a href="https://console.firebase.google.com/project/rust-d3d5e">console.firebase.google.com/project/rust-d3d5e</a></div>
+<p>同時編集は Google の Firebase（Firestore）を使います。設定は3ステップです。</p>
 <ol>
   <li><b>firebaseConfig を貼る</b>：Firebase コンソール → ⚙ プロジェクトの設定 → 「マイアプリ」→ SDK の設定と構成 に出る <code>firebaseConfig = { apiKey: "...", projectId: "...", ... }</code> の中身を、リポジトリの <code>firebase-config.js</code> に貼る：
 <pre><code>window.FIREBASE_CONFIG = {

@@ -45,6 +45,21 @@ main{display:grid;grid-template-columns:230px minmax(0,1fr) 340px;gap:14px;paddi
 .panel h2{font-size:13px;letter-spacing:.08em;color:var(--muted);text-transform:uppercase;margin-bottom:10px;display:flex;align-items:center;gap:8px}
 .panel h2 .grow{flex:1}
 
+/* groups */
+.groups{display:flex;flex-wrap:wrap;gap:4px}
+.gchip{display:inline-flex;align-items:center;gap:4px;padding:3px 8px;border:1px solid var(--line2);border-radius:14px;background:var(--bg2);font-size:12px;cursor:pointer;max-width:100%}
+.gchip:hover{border-color:var(--accent2)}
+.gchip.on{background:var(--accent);border-color:var(--accent);color:#fff}
+.gchip .n{color:var(--dim);font-size:11px}
+.gchip.on .n{color:#fff9}
+.gchip .ed{margin-left:2px;opacity:.6;font-size:11px}
+.gchip .ed:hover{opacity:1}
+.raidgroups{display:none;flex-wrap:wrap;gap:6px;margin-bottom:8px}
+body.raid .raidgroups{display:flex}
+body.raid .raidgroups .gchip{font-size:14px;padding:6px 12px}
+.gpick{display:flex;flex-direction:column;gap:4px;max-height:220px;overflow:auto;margin-top:6px}
+.gpick label{display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer}
+.gpick input{accent-color:var(--accent)}
 /* members */
 .members{display:flex;flex-direction:column;gap:6px}
 .member{display:flex;align-items:center;gap:8px;padding:8px 10px;border:1px solid var(--line);border-radius:6px;background:var(--bg2);cursor:pointer}
@@ -245,7 +260,9 @@ body.room .localonly{display:none!important}
 
 <main>
   <aside class="left panel">
-    <h2>参加者 / 役割 <span class="grow"></span><span id="memberCount" class="badge"></span></h2>
+    <h2>グループ <span class="k" style="font-size:11px;text-transform:none;letter-spacing:0;font-weight:400">状況別に参加者を選ぶ</span><span class="grow"></span><button id="btnAddGroup" class="small editonly" title="登録済みの参加者を選んでグループを作る（例：レイド／防衛／ファーム）">＋</button></h2>
+    <div id="groups" class="groups"></div>
+    <h2 style="margin-top:12px">参加者 / 役割 <span class="grow"></span><span id="memberCount" class="badge"></span></h2>
     <div id="members" class="members"></div>
     <div class="toolbar" style="margin-top:10px">
       <button id="btnAddMember" class="primary small">＋ 追加</button>
@@ -254,6 +271,7 @@ body.room .localonly{display:none!important}
   </aside>
 
   <section class="editor panel">
+    <div id="raidgroups" class="raidgroups"></div>
     <div id="raidtabs" class="raidtabs"></div>
     <div id="editorEmpty" class="help">左の「＋ 追加」から参加者を作成してください。</div>
     <div id="editor" class="hidden">
@@ -388,7 +406,55 @@ function emptyMember(name, role, color) {
   if (isRoom()) { m.uid = sync.uid; m.order = ms.reduce((a, x) => Math.max(a, x.order ?? 0), 0) + 1; m.createdAt = Date.now(); }
   return m;
 }
-function emptyPlan(name) { return { id: uid(), name: name || "レイド計画", updated: Date.now(), stack: 1, members: [] }; }
+function emptyPlan(name) { return { id: uid(), name: name || "レイド計画", updated: Date.now(), stack: 1, members: [], groups: [] }; }
+/* ============ グループ（状況別に参加者を選ぶ） ============ */
+function planGroups() { const p = state.plan(); if (!Array.isArray(p.groups)) p.groups = []; return p.groups; }
+function currentGroup() { return state.group ? planGroups().find(g => g.id === state.group) || null : null; }
+function activeMembers() { const p = state.plan(); const g = currentGroup(); return g ? p.members.filter(m => g.members.includes(m.id)) : p.members; }
+function isMineG(g) { return !isRoom() || isMaster() || (g && g.uid === sync.uid); }
+function setGroup(id) { state.group = id; const ms = activeMembers(); if (!ms.some(m => m.id === state.sel)) state.sel = (ms.find(m => isMine(m)) || ms[0] || {}).id || null; closePop(); renderAll(); }
+function renderGroups() {
+  const gs = planGroups(); const p = state.plan();
+  for (const [boxId, big] of [["#groups", false], ["#raidgroups", true]]) {
+    const box = $(boxId); box.innerHTML = "";
+    if (!gs.length && big) continue;
+    box.append(el("span", { class: "gchip" + (!state.group ? " on" : ""), onclick: () => setGroup(null) }, "すべて", el("span", { class: "n" }, p.members.length)));
+    for (const g of gs) {
+      const cnt = g.members.filter(id => p.members.some(m => m.id === id)).length;
+      const chip = el("span", { class: "gchip" + (state.group === g.id ? " on" : ""), title: g.owner ? "作成者: " + g.owner : "", onclick: () => setGroup(g.id) }, g.name || "(名前なし)", el("span", { class: "n" }, cnt));
+      if (!big && isMineG(g)) chip.append(el("span", { class: "ed", title: "編集", onclick: e => { e.stopPropagation(); openGroupEditor(g, chip); } }, "✎"));
+      box.append(chip);
+    }
+  }
+}
+function openGroupEditor(g, anchor) {
+  closePop(); const p = state.plan(); const isNew = !g;
+  const draft = g ? { ...g, members: [...g.members] } : { id: uid(), name: "", members: [] };
+  const nameIn = el("input", { type: "text", placeholder: "グループ名（例：レイド、防衛、ファーム）", value: draft.name, style: "flex:1" });
+  const picks = el("div", { class: "gpick" }, ...(p.members.length ? p.members.map(m => {
+    const cb = el("input", { type: "checkbox" }); cb.checked = draft.members.includes(m.id);
+    cb.addEventListener("change", () => { if (cb.checked) { if (!draft.members.includes(m.id)) draft.members.push(m.id); } else draft.members = draft.members.filter(x => x !== m.id); });
+    return el("label", {}, cb, el("span", { class: "dot", style: "background:" + m.color + ";width:10px;height:10px;border-radius:50%;display:inline-block" }), el("span", {}, mlabel(m)), isRoom() && !isMine(m) ? el("span", { class: "badge" }, m.owner ? m.owner.slice(0, 6) : "他") : null);
+  }) : [el("div", { class: "help" }, "参加者がまだいません。先に「＋ 追加」で作成してください。")]));
+  const save = () => {
+    draft.name = nameIn.value.trim(); if (!draft.name) { toast("グループ名を入力してください"); nameIn.focus(); return; }
+    draft.members = draft.members.filter(id => p.members.some(m => m.id === id));
+    if (isRoom()) { draft.uid = sync.uid; draft.owner = userName(); syncGroupSave(draft); }
+    else { const gs = planGroups(); const i = gs.findIndex(x => x.id === draft.id); if (i >= 0) gs[i] = draft; else gs.push(draft); state.save(); }
+    closePop(); state.group = draft.id; setGroup(draft.id); toast(isNew ? `グループ「${draft.name}」を作りました` : "グループを更新しました");
+  };
+  nameIn.addEventListener("keydown", e => { if (e.key === "Enter") save(); });
+  popEl = el("div", { class: "pop", style: "width:320px" },
+    el("div", { class: "nm" }, isNew ? "グループを作る" : "グループを編集"),
+    el("div", { class: "row" }, nameIn),
+    el("div", { class: "sn", style: "margin-top:6px" }, "入れる参加者にチェック"), picks,
+    el("div", { class: "row" },
+      isNew ? null : el("button", { class: "small danger", onclick: () => { if (!confirm(`グループ「${draft.name}」を削除しますか？（参加者は消えません）`)) return; if (isRoom()) syncGroupDelete(draft.id); else { const gs = planGroups(); const i = gs.findIndex(x => x.id === draft.id); if (i >= 0) gs.splice(i, 1); state.save(); } if (state.group === draft.id) state.group = null; closePop(); renderAll(); } }, "削除"),
+      el("span", { style: "flex:1" }), el("button", { class: "small", onclick: closePop }, "キャンセル"), el("button", { class: "small primary", onclick: save }, "保存")));
+  document.body.append(popEl);
+  const r = anchor.getBoundingClientRect(); let left = r.left + scrollX; if (left + 330 > innerWidth + scrollX) left = Math.max(4, innerWidth + scrollX - 335); popEl.style.left = left + "px"; popEl.style.top = (r.bottom + scrollY + 6) + "px";
+  setTimeout(() => nameIn.focus(), 0);
+}
 // 旧データ移行：pack 設定を装備の特別枠へ／特別枠の中身から pack を導出
 function migratePack(m) {
   if (!m.role && m.name) m.role = m.name; m.name = "";          // 旧データ：名前欄しか無いものは役割名として扱う
@@ -399,7 +465,7 @@ function migratePack(m) {
 }
 
 const state = {
-  data: null, sel: null, tab: "me", checks: {},
+  data: null, sel: null, tab: "me", checks: {}, group: null,
   plan() { if (sync.plan) return sync.plan; return this.data.plans.find(p => p.id === this.data.current) || this.data.plans[0]; },
   member() { return this.plan().members.find(m => m.id === this.sel) || null; },
   save(kind) { undoRecord(kind); this.persist(); },
@@ -450,22 +516,24 @@ async function copyText(text, btn) {
 /* ============ render: members ============ */
 function renderMembers() {
   const p = state.plan(); const box = $("#members"); box.innerHTML = "";
-  $("#memberCount").textContent = p.members.length + "人";
-  for (const m of p.members) {
+  const shown = activeMembers(); renderGroups();
+  $("#memberCount").textContent = (currentGroup() ? shown.length + "/" : "") + p.members.length + "人";
+  for (const m of shown) {
     const n = countItems(m);
     box.append(el("div", { class: "member" + (m.id === state.sel ? " active" : ""), onclick: () => { state.sel = m.id; renderAll(); } },
       el("span", { class: "dot", style: "background:" + m.color }),
       el("span", { class: "nm" }, mlabel(m)),
-      isRoom() ? el("span", { class: "badge" + (isMine(m) ? " mine" : ""), title: m.owner ? "作成者: " + m.owner : "" }, isMine(m) ? "自分" : (m.owner ? m.owner.slice(0, 6) : "閲覧")) : null,
+      isRoom() ? el("span", { class: "badge" + (isMine(m) ? " mine" : ""), title: (m.owner ? "作成者: " + m.owner : "") + (isMaster() && m.uid !== sync.uid ? "（マスター権限で編集可）" : "") }, m.uid === sync.uid ? "自分" : (m.owner ? m.owner.slice(0, 6) : (isMaster() ? "他" : "閲覧"))) : null,
       el("span", { class: "cnt" }, n + "種")));
   }
   // raid tabs
   const rt = $("#raidtabs"); rt.innerHTML = "";
-  for (const m of p.members) rt.append(el("button", { class: m.id === state.sel ? "on" : "", style: m.id === state.sel ? `background:${m.color};border-color:${m.color}` : `border-color:${m.color}`, onclick: () => { state.sel = m.id; renderAll(); } }, mlabel(m)));
+  for (const m of shown) rt.append(el("button", { class: m.id === state.sel ? "on" : "", style: m.id === state.sel ? `background:${m.color};border-color:${m.color}` : `border-color:${m.color}`, onclick: () => { state.sel = m.id; renderAll(); } }, mlabel(m)));
+  $("#tabAll").textContent = currentGroup() ? "グループ合計" : "全員合計";
   // header
   const ps = $("#planSel"); ps.innerHTML = ""; for (const pl of state.data.plans) ps.append(el("option", { value: pl.id }, pl.name)); if (!isRoom()) ps.value = p.id;
   if (document.activeElement !== $("#planName")) $("#planName").value = p.name;
-  $("#planName").disabled = isRoom() && !(sync.roomDoc && sync.roomDoc.createdBy === sync.uid);
+  $("#planName").disabled = !canManageRoom();
   $("#planName").title = $("#planName").disabled ? "部屋の名前は作成者だけが変更できます" : "計画名";
 }
 function countItems(m) { const s = new Set(); for (const z in ZONES) for (const x of m[z]) if (x) s.add(x.s); return s.size; }
@@ -503,7 +571,7 @@ function renderEditor() {
 $("#mPack").addEventListener("change", e => { const m = state.member(); if (!m) return; const k = e.target.value; const cur = m.wear[WEAR_SPECIAL]; if (k === "none") { if (cur && cur.s !== "parachute") m.wear[WEAR_SPECIAL] = null; } else m.wear[WEAR_SPECIAL] = { s: PACKS[k].s, q: 1 }; m.pack = packOf(m); state.save(); renderAll(); });
 /* スタック倍率（1スロット上限） */
 function renderStackBar() {
-  const mult = stackMult(); const canEdit = !isRoom() || (sync.roomDoc && sync.roomDoc.createdBy === sync.uid);
+  const mult = stackMult(); const canEdit = canManageRoom();
   const b = $("#stackBtns"); b.innerHTML = "";
   for (const v of STACK_PRESETS) b.append(el("button", { class: v === mult ? "on" : "", disabled: canEdit ? null : "", onclick: () => setStackMult(v) }, "×" + v));
   const c = $("#stackCustom"); if (document.activeElement !== c) c.value = STACK_PRESETS.includes(mult) ? "" : mult; c.disabled = !canEdit; c.placeholder = "他";
@@ -511,7 +579,7 @@ function renderStackBar() {
 }
 function setStackMult(v) {
   v = Math.max(1, Math.min(100, Math.round(+v || 1)));
-  if (isRoom()) { if (!(sync.roomDoc && sync.roomDoc.createdBy === sync.uid)) return; sync.roomDoc.stack = v; sync.fs.updateDoc(sync.fs.doc(sync.db, "rustraid_rooms", sync.room), { stack: v }).catch(e => toast("変更できませんでした: " + (e.code || e.message))); }
+  if (isRoom()) { if (!canManageRoom()) return; sync.roomDoc.stack = v; sync.fs.updateDoc(sync.fs.doc(sync.db, "rustraid_rooms", sync.room), { stack: v }).catch(e => toast("変更できませんでした: " + (e.code || e.message))); }
   else state.plan().stack = v;
   // 上限を超えたスロットを切り詰める（自分の投稿だけ）
   let clipped = 0;
@@ -650,7 +718,7 @@ function aggregate(members, includeWear = true, includePack = true) {
 function checkKey(mid) { return state.plan().id + "/" + (mid || "all"); }
 function renderSummary() {
   const p = state.plan(); const m = state.member();
-  const list = state.tab === "all" ? aggregate(p.members) : (m ? aggregate([m]) : []);
+  const list = state.tab === "all" ? aggregate(activeMembers()) : (m ? aggregate([m]) : []);
   $("#tabMe").classList.toggle("on", state.tab === "me"); $("#tabAll").classList.toggle("on", state.tab === "all");
   const box = $("#summary"); box.innerHTML = "";
   const ck = state.checks[checkKey(state.tab === "all" ? null : (m && m.id))] || {};
@@ -669,10 +737,10 @@ function convEntry(s, max) { return { TargetCategory: null, MaxAmountInOutput: m
 function renderConv() {
   const p = state.plan(); const m = state.member();
   const useQty = $("#optQty").checked, chunk = +$("#optChunk").value, wear = $("#optWear").checked, pack = $("#optPack").checked;
-  const list = state.tab === "all" ? aggregate(p.members, wear, pack) : (m ? aggregate([m], wear, pack) : []);
+  const list = state.tab === "all" ? aggregate(activeMembers(), wear, pack) : (m ? aggregate([m], wear, pack) : []);
   const box = $("#convBlocks"); box.innerHTML = "";
   if (!list.length) { box.append(el("div", { class: "help" }, "アイテムを設定すると、ここにコンベア用JSONが出ます。")); return; }
-  const label = state.tab === "all" ? "全員合計" : mlabel(m);
+  const label = state.tab === "all" ? (currentGroup() ? `「${currentGroup().name}」合計` : "全員合計") : mlabel(m);
   const blocks = []; for (let i = 0; i < list.length; i += chunk) blocks.push(list.slice(i, i + chunk));
   blocks.forEach((b, bi) => {
     const json = JSON.stringify(b.map(({ it, q }) => convEntry(it.s, useQty ? q : 0)), null, 2);
@@ -736,7 +804,7 @@ $("#picker").addEventListener("mousedown", e => { if (e.target === $("#picker"))
 /* ============ share / import ============ */
 const b64u = { enc: b => btoa(String.fromCharCode(...b)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, ""), dec: s => Uint8Array.from(atob(s.replace(/-/g, "+").replace(/_/g, "/")), c => c.charCodeAt(0)) };
 async function encodePlan(p) {
-  const json = JSON.stringify({ v: 3, name: p.name, stack: stackMult(), members: p.members.map(m => ({ name: m.name, role: m.role, color: m.color, pack: packOf(m), belt: m.belt, main: m.main, wear: m.wear, bag: m.bag.slice(0, packCap(m)) })) });
+  const json = JSON.stringify({ v: 4, name: p.name, stack: stackMult(), members: p.members.map(m => ({ id: m.id, name: m.name, role: m.role, color: m.color, pack: packOf(m), belt: m.belt, main: m.main, wear: m.wear, bag: m.bag.slice(0, packCap(m)) })), groups: planGroups().map(g => ({ name: g.name, members: g.members })) });
   const bytes = new TextEncoder().encode(json);
   if (typeof CompressionStream === "function") { const cs = new CompressionStream("deflate-raw"); const w = cs.writable.getWriter(); w.write(bytes); w.close(); const out = new Uint8Array(await new Response(cs.readable).arrayBuffer()); return "d" + b64u.enc(out); }
   return "j" + b64u.enc(bytes);
@@ -748,14 +816,16 @@ async function decodePlan(str) {
 }
 function importPlanObj(obj, asNew = true) {
   const p = emptyPlan(obj.name || "読み込んだ計画"); p.stack = Math.max(1, Math.min(100, +obj.stack || 1));
-  for (const m of obj.members || []) { const nm = { id: uid(), name: m.name || "", role: m.role || "", color: m.color || COLORS[p.members.length % COLORS.length], pack: PACKS[m.pack] ? m.pack : "none", belt: [], main: [], wear: [], bag: [] }; for (const z in ZONES) { nm[z] = (m[z] || []).slice(0, ZONES[z]).map(x => x && item(x.s) ? { s: x.s, q: Math.max(1, +x.q || 1) } : null); while (nm[z].length < ZONES[z]) nm[z].push(null); } migratePack(nm); p.members.push(nm); }
+  const idmap = new Map();
+  for (const m of obj.members || []) { const nm = { id: uid(), name: m.name || "", role: m.role || "", color: m.color || COLORS[p.members.length % COLORS.length], pack: PACKS[m.pack] ? m.pack : "none", belt: [], main: [], wear: [], bag: [] }; for (const z in ZONES) { nm[z] = (m[z] || []).slice(0, ZONES[z]).map(x => x && item(x.s) ? { s: x.s, q: Math.max(1, +x.q || 1) } : null); while (nm[z].length < ZONES[z]) nm[z].push(null); } migratePack(nm); if (m.id) idmap.set(m.id, nm.id); p.members.push(nm); }
+  p.groups = (obj.groups || []).map(g => ({ id: uid(), name: g.name || "", members: (g.members || []).map(id => idmap.get(id)).filter(Boolean) })).filter(g => g.name);
   if (asNew) {
     // 未使用の初期計画しか無ければ置き換える（空の計画を残さない）
     const only = state.data.plans.length === 1 ? state.data.plans[0] : null;
     if (only && !only.members.length && only.name === "レイド計画") state.data.plans = [];
     state.data.plans.push(p); state.data.current = p.id;
-  } else { const cur = state.plan(); cur.name = p.name; cur.members = p.members; }
-  state.sel = p.members[0] ? p.members[0].id : null; state.save(); renderAll();
+  } else { const cur = state.plan(); cur.name = p.name; cur.members = p.members; cur.groups = p.groups; }
+  state.group = null; state.sel = p.members[0] ? p.members[0].id : null; state.save(); renderAll();
 }
 function openText(title, help, text, applyFn) {
   $("#tmTitle").textContent = title; $("#tmHelp").innerHTML = help; $("#tmText").value = text; $("#tmMsg").textContent = "";
@@ -859,12 +929,13 @@ function applyGearTpl(t) {
   migratePack(m); state.save(); renderAll(); toast(`装備テンプレ「${t.name}」を適用しました`);
 }
 $("#btnGearTpl").addEventListener("click", e => openGearTpl(e.currentTarget));
+$("#btnAddGroup").addEventListener("click", e => openGroupEditor(null, e.currentTarget));
 
 /* ============ undo / redo ============
  * state.save() のたびに「直前の状態」を積む方式。部屋モードでは自分の投稿だけが対象。
  * 役割名・色・計画名のタイプ中（kind="text"）は 1.5 秒以内の連続変更を 1 手にまとめる */
 const undo = { stack: [], redo: [], last: null, lastT: 0, lastKind: "", planId: null, MAX: 60, applying: false };
-function undoSnapshot() { const p = state.plan(); return JSON.stringify({ name: p.name, stack: p.stack || 1, members: p.members.filter(m => isMine(m)).map(m => ({ ...m, pack: packOf(m) })) }); }   // pack は特別枠から導出（古い値が復元時に混ざらないように）
+function undoSnapshot() { const p = state.plan(); return JSON.stringify({ name: p.name, stack: p.stack || 1, groups: isRoom() ? undefined : planGroups(), members: p.members.filter(m => isMine(m)).map(m => ({ ...m, pack: packOf(m) })) }); }   // pack は特別枠から導出（古い値が復元時に混ざらないように）
 function undoReset() { undo.stack = []; undo.redo = []; undo.last = undoSnapshot(); undo.planId = state.plan().id; undo.lastKind = ""; renderUndoBtns(); }
 function undoRecord(kind) {
   if (undo.applying) return;
@@ -881,7 +952,7 @@ function undoApply(json) {
   const s = JSON.parse(json); const p = state.plan();
   undo.applying = true;
   try {
-    if (!isRoom()) { p.name = s.name; p.stack = s.stack; p.members = s.members; }
+    if (!isRoom()) { p.name = s.name; p.stack = s.stack; p.members = s.members; if (s.groups) p.groups = s.groups; }
     else {
       const ids = new Set(s.members.map(m => m.id));
       for (const m of p.members) if (isMine(m) && !ids.has(m.id)) syncDelete(m.id);             // 取り消しで消える自分の投稿
@@ -909,7 +980,10 @@ const FB_VER = "10.14.1";
 const sync = { cfg: (typeof window.FIREBASE_CONFIG === "object" && window.FIREBASE_CONFIG && window.FIREBASE_CONFIG.projectId) ? window.FIREBASE_CONFIG : null,
   room: null, plan: null, roomDoc: null, uid: null, authed: false, user: null, auth: null, authM: null, fs: null, db: null, unsubM: null, unsubR: null, status: "off", timers: new Map(), last: new Map(), nameTimer: null };
 function isRoom() { return !!sync.room; }
-function isMine(m) { return !isRoom() || (m && m.uid === sync.uid); }
+const MASTERS = new Set(Array.isArray(window.RRP_MASTERS) ? window.RRP_MASTERS : []);
+function isMaster() { return !!sync.uid && MASTERS.has(sync.uid); }          // マスター＝部屋内のすべてを編集できる
+function isMine(m) { return !isRoom() || isMaster() || (m && m.uid === sync.uid); }
+function canManageRoom() { return !isRoom() || isMaster() || !!(sync.roomDoc && sync.roomDoc.createdBy === sync.uid); }
 function localUid() { try { let u = localStorage.getItem("rrp.uid"); if (!u) { u = "local-" + uid() + uid(); localStorage.setItem("rrp.uid", u); } return u; } catch (e) { return "local-" + uid(); } }
 function userName() { const u = sync.user; if (!u || u.isAnonymous) return ""; return u.displayName || (u.providerData && u.providerData[0] && u.providerData[0].displayName) || u.email || "Googleユーザー"; }
 function applyUser(u) { sync.user = u; sync.uid = u ? u.uid : localUid(); sync.authed = !!u; renderAuth(); }
@@ -976,7 +1050,7 @@ function renderAuth() {
   const name = userName();
   b.textContent = name ? "👤 " + name : "Googleでログイン"; b.classList.toggle("primary", false);
   b.title = name ? "Googleでログイン中。クリックでログアウト" : "Googleアカウントでログインすると、別の端末でも自分の投稿を編集できます";
-  const me = $("#roomMe"); if (me) me.textContent = name ? "あなた: " + name + "（Google）" : "あなた: 匿名（この端末のみ）";
+  const me = $("#roomMe"); if (me) me.textContent = (name ? "あなた: " + name + "（Google）" : "あなた: 匿名（この端末のみ）") + (isMaster() ? " ★マスター（全編集可）" : "");
 }
 $("#btnAuth").addEventListener("click", () => { if (userName()) logoutGoogle(); else loginGoogle(); });
 function memberPayload(m) { return { uid: m.uid || sync.uid, owner: m.uid && m.uid !== sync.uid ? (m.owner || "") : userName(), name: m.name || "", role: m.role || "", color: m.color || COLORS[0], pack: packOf(m), belt: m.belt, main: m.main, wear: m.wear, bag: m.bag, order: m.order ?? 0, createdAt: m.createdAt ?? Date.now(), updatedAt: Date.now() }; }
@@ -1002,8 +1076,14 @@ function showRoomLink() { openText("部屋のURL（同時編集）", "このURL�
 async function joinRoom(id) {
   if (!(await fbInit())) { toast("オンライン機能は未設定です（firebase-config.js）"); return false; }
   leaveRoom(true);
-  sync.room = id; sync.plan = { id: "room:" + id, name: "レイド計画", members: [] }; sync.last.clear();
+  sync.room = id; sync.plan = { id: "room:" + id, name: "レイド計画", members: [], groups: [] }; sync.last.clear(); state.group = null;
   const { doc, collection, onSnapshot } = sync.fs;
+  sync.unsubG = onSnapshot(collection(sync.db, "rustraid_rooms", id, "groups"), s => {
+    const gs = []; s.forEach(d => { const x = d.data(); gs.push({ id: d.id, uid: x.uid || "", owner: x.owner || "", name: x.name || "", members: Array.isArray(x.members) ? x.members : [], createdAt: x.createdAt || 0 }); });
+    gs.sort((a, b) => a.createdAt - b.createdAt); sync.plan.groups = gs;
+    if (state.group && !gs.some(g => g.id === state.group)) state.group = null;
+    renderAll();
+  }, e => { console.warn("groups sync", e); });
   sync.unsubR = onSnapshot(doc(sync.db, "rustraid_rooms", id), s => { sync.roomDoc = s.exists() ? s.data() : null; if (sync.roomDoc && document.activeElement !== $("#planName")) sync.plan.name = sync.roomDoc.name || "レイド計画"; renderAll(); }, e => { setRoomStatus("err"); });
   sync.unsubM = onSnapshot(collection(sync.db, "rustraid_rooms", id, "members"), s => {
     const cur = new Map(sync.plan.members.map(m => [m.id, m]));
@@ -1019,10 +1099,20 @@ async function joinRoom(id) {
   closePop(); moveSrc = null; state.tab = "me"; undoReset(); renderAll(); return true;
 }
 function leaveRoom(silent) {
-  if (sync.unsubM) sync.unsubM(); if (sync.unsubR) sync.unsubR(); sync.unsubM = sync.unsubR = null;
+  if (sync.unsubM) sync.unsubM(); if (sync.unsubR) sync.unsubR(); if (sync.unsubG) sync.unsubG(); sync.unsubM = sync.unsubR = sync.unsubG = null; state.group = null;
   for (const t of sync.timers.values()) clearTimeout(t); sync.timers.clear(); sync.last.clear();
   sync.room = null; sync.plan = null; sync.roomDoc = null; sync.status = "off";
   if (!silent) { const u = new URL(location.href); u.searchParams.delete("room"); history.replaceState(null, "", u); state.sel = (state.plan().members[0] || {}).id || null; undoReset(); renderAll(); }
+}
+async function syncGroupSave(g) {
+  const existing = sync.plan.groups.find(x => x.id === g.id);
+  const data = { uid: sync.uid, owner: userName(), name: g.name, members: g.members, createdAt: (existing && existing.createdAt) || Date.now(), updatedAt: Date.now() };
+  const i = sync.plan.groups.findIndex(x => x.id === g.id); if (i >= 0) sync.plan.groups[i] = { ...g, ...data }; else sync.plan.groups.push({ ...g, ...data });
+  try { await sync.fs.setDoc(sync.fs.doc(sync.db, "rustraid_rooms", sync.room, "groups", g.id), data); } catch (e) { toast("グループを保存できませんでした: " + (e.code || e.message)); }
+}
+async function syncGroupDelete(id) {
+  sync.plan.groups = sync.plan.groups.filter(x => x.id !== id);
+  try { await sync.fs.deleteDoc(sync.fs.doc(sync.db, "rustraid_rooms", sync.room, "groups", id)); } catch (e) { toast("グループを削除できませんでした: " + (e.code || e.message)); }
 }
 function payloadKey(m) { return JSON.stringify(memberPayload({ ...m, updatedAt: 0 })).replace(/"updatedAt":\d+/, ""); }
 function syncPushDirty() {

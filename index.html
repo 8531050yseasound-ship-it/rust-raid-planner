@@ -58,6 +58,26 @@ main{display:grid;grid-template-columns:230px minmax(0,1fr) 340px;gap:14px;paddi
 body.raid .raidgroups{display:flex}
 body.raid .raidgroups .gchip{font-size:14px;padding:6px 12px}
 .gpick{display:flex;flex-direction:column;gap:4px;max-height:220px;overflow:auto;margin-top:6px}
+/* group summary */
+.gsum{border:1px solid var(--line2);border-radius:8px;background:var(--bg2);margin-bottom:14px}
+.gsum .hd{display:flex;flex-wrap:wrap;gap:8px 12px;align-items:center;padding:8px 12px;border-bottom:1px solid var(--line);cursor:pointer}
+.gsum .hd b{color:var(--accent2)}
+.gsum .hd .k{font-size:12px;color:var(--muted)}
+.gsum .hd .grow{flex:1}
+.gsum.collapsed .bd{display:none}
+.gsum .bd{padding:8px 12px;max-height:46vh;overflow:auto}
+.gsum table{border-collapse:collapse;width:100%;font-size:13px}
+.gsum th{text-align:left;color:var(--dim);font-weight:500;font-size:11px;padding:2px 6px;border-bottom:1px solid var(--line)}
+.gsum td{padding:3px 6px;border-bottom:1px solid var(--line);vertical-align:middle}
+.gsum td.ic img{width:26px;height:26px;background:var(--slot);border-radius:4px;display:block}
+.gsum td.tot{font-weight:700;font-variant-numeric:tabular-nums;text-align:right;white-space:nowrap}
+.gsum .who{display:inline-flex;align-items:center;gap:4px;margin:1px 6px 1px 0;font-size:12px;color:var(--muted);white-space:nowrap}
+.gsum .who i{width:8px;height:8px;border-radius:50%;display:inline-block}
+.gsum .who b{color:var(--text);font-weight:600}
+.gsum .mrow{display:flex;flex-wrap:wrap;gap:6px 14px;font-size:12px;color:var(--muted);margin-bottom:8px}
+body.raid .gsum .bd{max-height:none}
+body.raid .gsum table{font-size:15px}
+body.raid .gsum td.ic img{width:34px;height:34px}
 .gpick label{display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer}
 .gpick input{accent-color:var(--accent)}
 /* members */
@@ -272,6 +292,7 @@ body.room .localonly{display:none!important}
 
   <section class="editor panel">
     <div id="raidgroups" class="raidgroups"></div>
+    <div id="groupSummary" class="gsum hidden"></div>
     <div id="raidtabs" class="raidtabs"></div>
     <div id="editorEmpty" class="help">左の「＋ 追加」から参加者を作成してください。</div>
     <div id="editor" class="hidden">
@@ -412,7 +433,39 @@ function planGroups() { const p = state.plan(); if (!Array.isArray(p.groups)) p.
 function currentGroup() { return state.group ? planGroups().find(g => g.id === state.group) || null : null; }
 function activeMembers() { const p = state.plan(); const g = currentGroup(); return g ? p.members.filter(m => g.members.includes(m.id)) : p.members; }
 function isMineG(g) { return !isRoom() || isMaster() || (g && g.uid === sync.uid); }
-function setGroup(id) { state.group = id; const ms = activeMembers(); if (!ms.some(m => m.id === state.sel)) state.sel = (ms.find(m => isMine(m)) || ms[0] || {}).id || null; closePop(); renderAll(); }
+function setGroup(id) { state.group = id; const ms = activeMembers(); if (!ms.some(m => m.id === state.sel)) state.sel = (ms.find(m => isMine(m)) || ms[0] || {}).id || null; if (id) state.tab = "all"; closePop(); renderAll(); }
+/* グループのまとめ：全員の持ち物を集計し、アイテムごとの合計と誰がいくつ持つかを表示 */
+let gsumCollapsed = false;
+function groupSummaryRows(members) {
+  const rows = new Map();   // s -> { it, total, by: [{m, q}] }
+  for (const m of members) for (const { it, q } of aggregate([m])) { let r = rows.get(it.s); if (!r) { r = { it, total: 0, by: [] }; rows.set(it.s, r); } r.total += q; r.by.push({ m, q }); }
+  return [...rows.values()].sort((a, b) => (isRaid(b.it) - isRaid(a.it)) || CAT_ORDER.indexOf(a.it.c) - CAT_ORDER.indexOf(b.it.c) || a.it.n.localeCompare(b.it.n));
+}
+function groupSummaryText(g, members, rows) {
+  const lines = [`【${g.name}】${members.length}人：${members.map(mlabel).join("、")}`, `アイテム ${rows.length}種類 / 合計 ${rows.reduce((a, r) => a + r.total, 0)}個`];
+  for (const r of rows) lines.push(`- ${jname(r.it)} ×${r.total}` + (r.by.length > 1 ? `（${r.by.map(x => `${mlabel(x.m)} ${x.q}`).join(" / ")}）` : `（${mlabel(r.by[0].m)}）`));
+  return lines.join("\n");
+}
+function renderGroupSummary() {
+  const box = $("#groupSummary"); const g = currentGroup();
+  if (!g) { box.classList.add("hidden"); box.innerHTML = ""; return; }
+  const members = activeMembers(); const rows = groupSummaryRows(members); const total = rows.reduce((a, r) => a + r.total, 0);
+  box.classList.remove("hidden"); box.classList.toggle("collapsed", gsumCollapsed); box.innerHTML = "";
+  const btnCopy = el("button", { class: "small", title: "この一覧を文章としてコピー（Discord等に貼り付け）", onclick: e => { e.stopPropagation(); copyText(groupSummaryText(g, members, rows), btnCopy); } }, "📋 コピー");
+  box.append(el("div", { class: "hd", onclick: () => { gsumCollapsed = !gsumCollapsed; renderGroupSummary(); } },
+    el("span", {}, "📦 ", el("b", {}, g.name), " のまとめ"), el("span", { class: "k" }, `${members.length}人 ・ ${rows.length}種類 ・ 合計 ${total}個`), el("span", { class: "grow" }), btnCopy, el("span", { class: "k" }, gsumCollapsed ? "▼ 開く" : "▲ たたむ")));
+  const bd = el("div", { class: "bd" });
+  bd.append(el("div", { class: "mrow" }, ...members.map(m => el("span", { class: "who" }, el("i", { style: "background:" + m.color }), el("b", {}, mlabel(m)), `${countItems(m)}種`))));
+  if (!rows.length) bd.append(el("div", { class: "help" }, "このグループの参加者にはまだアイテムがありません。"));
+  else {
+    const tbl = el("table", {}, el("thead", {}, el("tr", {}, el("th", {}, ""), el("th", {}, "アイテム"), el("th", { style: "text-align:right" }, "合計"), el("th", {}, "誰がいくつ"))));
+    const tb = el("tbody", {});
+    for (const r of rows) tb.append(el("tr", {}, el("td", { class: "ic" }, el("img", { src: ico(r.it.s), loading: "lazy" })), el("td", {}, jname(r.it), r.it.j ? el("small", { style: "color:var(--dim)" }, " " + r.it.n) : null), el("td", { class: "tot" }, "×" + r.total),
+      el("td", {}, ...r.by.map(x => el("span", { class: "who" }, el("i", { style: "background:" + x.m.color }), el("b", {}, mlabel(x.m)), "×" + x.q)))));
+    tbl.append(tb); bd.append(tbl);
+  }
+  box.append(bd);
+}
 function renderGroups() {
   const gs = planGroups(); const p = state.plan();
   for (const [boxId, big] of [["#groups", false], ["#raidgroups", true]]) {
@@ -970,7 +1023,7 @@ function doRedo() { if (!undo.redo.length) { toast("やり直せる操作があ�
 function renderUndoBtns() { $("#btnUndo").disabled = !undo.stack.length; $("#btnRedo").disabled = !undo.redo.length; $("#btnUndo").title = `元に戻す（Ctrl+Z）${undo.stack.length ? " ・ " + undo.stack.length + " 手" : ""}`; }
 $("#btnUndo").addEventListener("click", doUndo); $("#btnRedo").addEventListener("click", doRedo);
 
-function renderAll() { renderMembers(); renderEditor(); renderSummary(); renderConv(); renderRoomBar(); }
+function renderAll() { renderMembers(); renderEditor(); renderSummary(); renderConv(); renderRoomBar(); renderGroupSummary(); }
 
 /* ============ online room (Firebase Firestore + 匿名認証) ============
  * URL ?room=ID を開くだけで参加。ログイン・パスワード無し。

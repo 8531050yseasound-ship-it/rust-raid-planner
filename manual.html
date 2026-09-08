@@ -208,17 +208,33 @@ footer{margin-top:40px;color:var(--dim);font-size:12px;border-top:1px solid var(
 （Life Planner の設定画面「ふたりで同期」に貼った構成と同じもの。Web用APIキーは公開しても問題ない種類で、保護はルールで行います）</li>
   <li><b>匿名ログインを有効化</b>：Firebase コンソール → Authentication → Sign-in method → 「匿名」を有効にする。これで利用者は何も入力せずに「自分」を識別できます。<b>30日自動クリーンアップはオフのまま</b>（オンにすると匿名ユーザーの投稿の所有権が消えます）</li>
   <li><b>Googleログインを有効化（任意）</b>：同じ画面で「Google」を有効にし、公開名とサポートメールを設定。さらに Authentication → 設定 → 承認済みドメイン に公開サイトのドメイン（<code>8531050yseasound-ship-it.github.io</code>）を追加</li>
-  <li><b>Firestore ルールを貼る</b>：Firestore Database → ルール に、既存のルールの <code>match /databases/{database}/documents {</code> の内側へ次を追加して「公開」：
-<pre><code>match /rustraid_rooms/{room} {
-  allow read: if true;
-  allow create: if request.auth != null &amp;&amp; request.resource.data.createdBy == request.auth.uid;
-  allow update: if request.auth != null &amp;&amp; resource.data.createdBy == request.auth.uid;
-  allow delete: if request.auth != null &amp;&amp; resource.data.createdBy == request.auth.uid;
-  match /members/{member} {
-    allow read: if true;
-    allow create: if request.auth != null &amp;&amp; request.resource.data.uid == request.auth.uid;
-    allow update: if request.auth != null &amp;&amp; resource.data.uid == request.auth.uid &amp;&amp; request.resource.data.uid == request.auth.uid;
-    allow delete: if request.auth != null &amp;&amp; resource.data.uid == request.auth.uid;
+  <li><b>Firestore ルールを貼る</b>：Firestore Database → ルール に次を貼って「公開」（2026-09-08 時点の全文。マスター・グループ・編集権限を含む）：
+<pre><code>rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // マスター（全編集可）
+    function isMaster() { return request.auth != null &amp;&amp; request.auth.uid == 'N6ptNPAqlEakhWxZZSH93qTKiuo2'; }
+    // 編集権限を渡された人（room.editors）
+    function isEditor(room) { return request.auth != null &amp;&amp; (request.auth.uid in get(/databases/$(database)/documents/rustraid_rooms/$(room)).data.get('editors', [])); }
+    function canEditAll(room) { return isMaster() || isEditor(room); }
+    match /rustraid_rooms/{room} {
+      allow read: if true;
+      allow create: if request.auth != null &amp;&amp; request.resource.data.createdBy == request.auth.uid;
+      allow update: if request.auth != null &amp;&amp; (resource.data.createdBy == request.auth.uid || isMaster());
+      allow delete: if request.auth != null &amp;&amp; (resource.data.createdBy == request.auth.uid || isMaster());
+      match /members/{member} {
+        allow read: if true;
+        allow create: if request.auth != null &amp;&amp; (request.resource.data.uid == request.auth.uid || canEditAll(room));
+        allow update: if request.auth != null &amp;&amp; ((resource.data.uid == request.auth.uid &amp;&amp; request.resource.data.uid == request.auth.uid) || canEditAll(room));
+        allow delete: if request.auth != null &amp;&amp; (resource.data.uid == request.auth.uid || canEditAll(room));
+      }
+      match /groups/{group} {
+        allow read: if true;
+        allow create: if request.auth != null &amp;&amp; (request.resource.data.uid == request.auth.uid || canEditAll(room));
+        allow update: if request.auth != null &amp;&amp; ((resource.data.uid == request.auth.uid &amp;&amp; request.resource.data.uid == request.auth.uid) || canEditAll(room));
+        allow delete: if request.auth != null &amp;&amp; (resource.data.uid == request.auth.uid || canEditAll(room));
+      }
+    }
   }
 }</code></pre>
 このルールで「誰でも閲覧・自分の投稿だけ書き換え可」がサーバ側でも保証されます（UIだけの制限ではなくなります）。</li>

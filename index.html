@@ -574,6 +574,13 @@ function renderPalette() {
 $("#plSearch").addEventListener("input", renderPalette);
 $("#plSearch").addEventListener("keydown", e => { if (e.key === "Escape") { $("#plSearch").value = ""; renderPalette(); } });
 $("#plToggle").addEventListener("click", e => { const p = $("#palette"); p.classList.toggle("collapsed"); e.currentTarget.textContent = p.classList.contains("collapsed") ? "▼" : "▲"; });
+// ドラッグ中に画面の上下端へ近づくと自動スクロール（HTML5 DnD はブラウザが窓をスクロールしてくれないため）
+let dragScrollTimer = null, dragScrollDy = 0;
+document.addEventListener("dragover", e => {
+  const m = 70, y = e.clientY; dragScrollDy = y < m ? -Math.ceil((m - y) / 4) : y > innerHeight - m ? Math.ceil((y - (innerHeight - m)) / 4) : 0;
+  if (dragScrollDy && !dragScrollTimer) dragScrollTimer = setInterval(() => { if (dragScrollDy) scrollBy(0, dragScrollDy); }, 16);
+});
+for (const t of ["drop", "dragend", "dragleave"]) document.addEventListener(t, e => { if (t === "dragleave" && e.relatedTarget) return; clearInterval(dragScrollTimer); dragScrollTimer = null; dragScrollDy = 0; });
 // スロット→一覧へドロップ＝削除
 $("#plGrid").addEventListener("dragover", e => { if (e.dataTransfer.types.includes("application/x-rrp-item")) return; e.preventDefault(); $("#plGrid").classList.add("dragover"); });
 $("#plGrid").addEventListener("dragleave", () => $("#plGrid").classList.remove("dragover"));
@@ -991,5 +998,6 @@ window.addEventListener("beforeunload", () => { for (const [id, t] of sync.timer
   else if (sync.cfg) { try { const hasSession = Object.keys(localStorage).some(k => k.startsWith("firebase:authUser")) || (await indexedDB.databases?.() || []).some(d => d.name === "firebaseLocalStorageDb"); if (hasSession) fbInit(); } catch (e) { } }   // 既にGoogleでログイン済みなら表示に反映
 })();
 </script>
+<script src="capture.js"></script>
 </body>
 </html>

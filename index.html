@@ -223,6 +223,7 @@ body.room .localonly{display:none!important}
     <button id="btnRaid" class="primary" title="レイド中に見やすい大きな表示に切り替え">⚔ レイド表示</button>
     <button id="btnRoom" class="editonly localonly hidden" title="みんなで同時編集できるオンライン部屋を作り、URLを共有する">🌐 オンライン部屋を作る</button>
     <button id="btnAuth" class="editonly hidden" title="Googleアカウントでログインすると、別の端末でも自分の投稿を編集できます">Googleでログイン</button>
+    <button id="btnTip" class="ghost" title="アイテムにカーソルを合わせたとき、大きな画像と名前を表示する（既定はオフ）">🔍 拡大表示: オフ</button>
     <button id="btnShare" title="この計画をURLとして共有（メンバーに送る）">🔗 共有リンク</button>
     <button id="btnExport" class="editonly">💾 書出</button>
     <button id="btnImport" class="editonly localonly">📂 読込</button>
@@ -595,7 +596,12 @@ function swap(m, z1, i1, z2, i2) {
 function setSlot(m, z, i, it) { const c = canPlace(z, i, it); if (!c.ok) { toast(c.why); renderAll(); return false; } m[z][i] = { s: it.s, q: defaultQty(it) }; state.save(); renderAll(); return true; }
 
 /* tooltip */
-function showTip(it, anchor) { const t = $("#tip"); t.querySelector("img").src = ico(it.s, 256); t.querySelector(".nm").textContent = jname(it); t.querySelector(".sn").textContent = (it.j ? it.n + " · " : "") + it.s; const r = anchor.getBoundingClientRect(); t.style.display = "block"; let x = r.right + 8, y = r.top; if (x + 200 > innerWidth) x = r.left - 208; if (y + 160 > innerHeight) y = innerHeight - 165; t.style.left = x + "px"; t.style.top = y + "px"; }
+/* 拡大表示（ホバーで大きな画像と名前）：既定オフ、ブラウザに保存 */
+let tipOn = false; try { tipOn = localStorage.getItem("rrp.tip") === "1"; } catch (e) { }
+function renderTipBtn() { const b = $("#btnTip"); b.textContent = "🔍 拡大表示: " + (tipOn ? "オン" : "オフ"); b.classList.toggle("primary", tipOn); }
+$("#btnTip").addEventListener("click", () => { tipOn = !tipOn; try { localStorage.setItem("rrp.tip", tipOn ? "1" : "0"); } catch (e) { } hideTip(); renderTipBtn(); toast(tipOn ? "カーソルを合わせると拡大表示します" : "拡大表示をオフにしました"); });
+renderTipBtn();
+function showTip(it, anchor) { if (!tipOn) return; const t = $("#tip"); t.querySelector("img").src = ico(it.s, 256); t.querySelector(".nm").textContent = jname(it); t.querySelector(".sn").textContent = (it.j ? it.n + " · " : "") + it.s; const r = anchor.getBoundingClientRect(); t.style.display = "block"; let x = r.right + 8, y = r.top; if (x + 200 > innerWidth) x = r.left - 208; if (y + 160 > innerHeight) y = innerHeight - 165; t.style.left = x + "px"; t.style.top = y + "px"; }
 function hideTip() { $("#tip").style.display = "none"; }
 
 /* popover */

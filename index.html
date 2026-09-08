@@ -538,7 +538,7 @@ function slotEl(m, z, i, x) {
   d.addEventListener("click", e => {
     if (document.body.classList.contains("raid")) return;
     if (ro()) return;
-    if (placeItem) { const it = placeItem; if (!e.shiftKey) setPlaceItem(null); setSlot(m, z, i, it); return; }   // 一覧でクリックしたアイテムを置く（Shift併用で連続配置）
+    if (placeItem) { const it = placeItem; setSlot(m, z, i, it); if (e.shiftKey) setPlaceItem(null); return; }   // 一覧で選んだアイテムを置く。選択は続くので何個でも連続配置（Esc または Shift＋クリックで終了）
     if (moveSrc) { swap(m, moveSrc.z, moveSrc.i, z, i); moveSrc = null; return; }
     if (x) openPop(m, z, i, d); else openPicker(sel => setSlot(m, z, i, sel));
   });
@@ -569,11 +569,13 @@ function renderPalette() {
     const d = el("div", { class: "pli" + (placeItem && placeItem.s === it.s ? " selected" : ""), draggable: "true", title: jname(it) + (it.j ? "（" + it.n + "）" : "") }, el("img", { src: ico(it.s), alt: jname(it), loading: "lazy" }));
     d.append(el("button", { class: "star" + (isRaid(it) ? " on" : ""), title: isRaid(it) ? "レイド定番から外す" : "レイド定番に追加", onclick: e => { e.stopPropagation(); toggleRaid(it); }, onmousedown: e => e.stopPropagation() }, isRaid(it) ? "★" : "☆"));
     d.addEventListener("dragstart", e => { e.dataTransfer.setData("application/x-rrp-item", it.s); e.dataTransfer.setData("text/plain", it.s); e.dataTransfer.effectAllowed = "copy"; hideTip(); });
-    d.addEventListener("click", () => { const m = state.member(); if (m && !isMine(m)) { toast("他の人の投稿は閲覧のみです"); return; } setPlaceItem(placeItem && placeItem.s === it.s ? null : it); if (placeItem) toast("置きたいスロットをクリック（Shift＋クリックで連続配置）"); });
+    d.addEventListener("click", () => { const m = state.member(); if (m && !isMine(m)) { toast("他の人の投稿は閲覧のみです"); return; } setPlaceItem(placeItem && placeItem.s === it.s ? null : it); if (placeItem) toast(`「${jname(it)}」を配置中：スロットを続けてクリック（Esc で終了）`); });
     d.addEventListener("mouseenter", () => showTip(it, d)); d.addEventListener("mouseleave", hideTip);
     g.append(d);
   }
-  $("#plHint").textContent = res.length ? `${res.length}件` + (q ? "（検索中）" : "") + " ・ ドラッグでスロットへ／クリック→スロットをクリックでも配置。スロットからここへドロップで削除。☆でレイド定番に追加、★で外す" : "該当なし";
+  const hint = $("#plHint"); hint.innerHTML = "";
+  if (placeItem) hint.append(el("span", { style: "color:var(--accent2)" }, `▶ 「${jname(placeItem)}」を配置中：スロットをクリックするたびに入ります。`), el("button", { class: "small", style: "margin-left:6px", onclick: () => setPlaceItem(null) }, "終了（Esc）"));
+  else hint.textContent = res.length ? `${res.length}件` + (q ? "（検索中）" : "") + " ・ ドラッグでスロットへ／クリック→スロットを続けてクリックで連続配置。スロットからここへドロップで削除。☆でレイド定番に追加、★で外す" : "該当なし";
 }
 $("#plSearch").addEventListener("input", renderPalette);
 $("#plSearch").addEventListener("keydown", e => { if (e.key === "Escape") { $("#plSearch").value = ""; renderPalette(); } });

@@ -275,6 +275,8 @@ body.room .localonly{display:none!important}
   <span class="help">URLを開いた人は誰でも閲覧でき、<b>自分の投稿</b>だけ追加・編集・削除できます。他の人の投稿は「コピーして自分用に編集」で使えます。</span>
   <span class="grow"></span>
   <button id="btnRoomUrl" class="small primary">🔗 部屋のURLをコピー</button>
+  <button id="btnEditors" class="small editonly hidden" title="部屋の作成者／マスターが、指定した人に『すべて編集できる』権限を渡す">👥 編集権限</button>
+  <button id="btnMyId" class="small ghost editonly" title="自分のIDをコピー（編集権限をもらうとき、部屋の作成者に送る）">🪪 自分のID</button>
   <button id="btnRoomLeave" class="small editonly">退出（ローカルへ）</button>
 </div>
 
@@ -432,7 +434,7 @@ function emptyPlan(name) { return { id: uid(), name: name || "レイド計画", 
 function planGroups() { const p = state.plan(); if (!Array.isArray(p.groups)) p.groups = []; return p.groups; }
 function currentGroup() { return state.group ? planGroups().find(g => g.id === state.group) || null : null; }
 function activeMembers() { const p = state.plan(); const g = currentGroup(); return g ? p.members.filter(m => g.members.includes(m.id)) : p.members; }
-function isMineG(g) { return !isRoom() || isMaster() || (g && g.uid === sync.uid); }
+function isMineG(g) { return !isRoom() || canEditAll() || (g && g.uid === sync.uid); }
 function setGroup(id) { state.group = id; const ms = activeMembers(); if (!ms.some(m => m.id === state.sel)) state.sel = (ms.find(m => isMine(m)) || ms[0] || {}).id || null; if (id) state.tab = "all"; closePop(); renderAll(); }
 /* グループのまとめ：全員の持ち物を集計し、アイテムごとの合計と誰がいくつ持つかを表示 */
 let gsumCollapsed = false;
@@ -576,7 +578,7 @@ function renderMembers() {
     box.append(el("div", { class: "member" + (m.id === state.sel ? " active" : ""), onclick: () => { state.sel = m.id; renderAll(); } },
       el("span", { class: "dot", style: "background:" + m.color }),
       el("span", { class: "nm" }, mlabel(m)),
-      isRoom() ? el("span", { class: "badge" + (isMine(m) ? " mine" : ""), title: (m.owner ? "作成者: " + m.owner : "") + (isMaster() && m.uid !== sync.uid ? "（マスター権限で編集可）" : "") }, m.uid === sync.uid ? "自分" : (m.owner ? m.owner.slice(0, 6) : (isMaster() ? "他" : "閲覧"))) : null,
+      isRoom() ? el("span", { class: "badge" + (isMine(m) ? " mine" : ""), title: (m.owner ? "作成者: " + m.owner : "") + (canEditAll() && m.uid !== sync.uid ? "（編集権限で編集可）" : "") }, m.uid === sync.uid ? "自分" : (m.owner ? m.owner.slice(0, 6) : (canEditAll() ? "他" : "閲覧"))) : null,
       el("span", { class: "cnt" }, n + "種")));
   }
   // raid tabs
@@ -1035,8 +1037,43 @@ const sync = { cfg: (typeof window.FIREBASE_CONFIG === "object" && window.FIREBA
 function isRoom() { return !!sync.room; }
 const MASTERS = new Set(Array.isArray(window.RRP_MASTERS) ? window.RRP_MASTERS : []);
 function isMaster() { return !!sync.uid && MASTERS.has(sync.uid); }          // マスター＝部屋内のすべてを編集できる
-function isMine(m) { return !isRoom() || isMaster() || (m && m.uid === sync.uid); }
+function roomEditors() { return (sync.roomDoc && Array.isArray(sync.roomDoc.editors)) ? sync.roomDoc.editors : []; }
+function isEditor() { return isRoom() && !!sync.uid && roomEditors().includes(sync.uid); }   // 編集権限を渡された人＝部屋内の投稿・グループを編集できる
+function canEditAll() { return isMaster() || isEditor(); }
+function isMine(m) { return !isRoom() || canEditAll() || (m && m.uid === sync.uid); }
 function canManageRoom() { return !isRoom() || isMaster() || !!(sync.roomDoc && sync.roomDoc.createdBy === sync.uid); }
+/* --- 編集権限の付与（部屋の作成者／マスターが、部屋に参加している人へ「すべて編集可」を渡す） --- */
+function roomPeople() {
+  // 部屋で見えている人（投稿・グループの作成者）を uid ごとにまとめる
+  const map = new Map();
+  const add = (uid, owner) => { if (!uid) return; const p = map.get(uid) || { uid, name: "", posts: 0 }; if (owner && !p.name) p.name = owner; p.posts++; map.set(uid, p); };
+  for (const m of sync.plan.members) add(m.uid, m.owner);
+  for (const g of sync.plan.groups || []) add(g.uid, g.owner);
+  const names = (sync.roomDoc && sync.roomDoc.editorNames) || {};
+  for (const uid of roomEditors()) if (!map.has(uid)) map.set(uid, { uid, name: names[uid] || "", posts: 0 });
+  return [...map.values()];
+}
+function personLabel(p) { const short = p.uid.slice(0, 6); if (p.uid === sync.uid) return (userName() || "匿名") + "（自分）"; return p.name ? `${p.name}` : `匿名 ${short}…`; }
+async function setEditor(uid, on, name) {
+  if (!canManageRoom() || !sync.roomDoc) return;
+  const list = roomEditors().filter(x => x !== uid); if (on) list.push(uid);
+  const names = { ...((sync.roomDoc.editorNames) || {}) }; if (on && name) names[uid] = name; if (!on) delete names[uid];
+  sync.roomDoc.editors = list; sync.roomDoc.editorNames = names; renderAll();
+  try { await sync.fs.updateDoc(sync.fs.doc(sync.db, "rustraid_rooms", sync.room), { editors: list, editorNames: names }); toast(on ? "編集権限を渡しました" : "編集権限を外しました"); }
+  catch (e) { toast("変更できませんでした: " + (e.code || e.message)); }
+}
+function openEditors(anchor) {
+  closePop(); const people = roomPeople().filter(p => p.uid !== sync.uid && !MASTERS.has(p.uid)); const eds = roomEditors();
+  const rows = people.length ? people.map(p => { const cb = el("input", { type: "checkbox" }); cb.checked = eds.includes(p.uid); cb.addEventListener("change", () => setEditor(p.uid, cb.checked, p.name)); return el("label", { style: "display:flex;align-items:center;gap:6px;font-size:13px" }, cb, el("span", { style: "flex:1" }, personLabel(p)), el("span", { class: "badge" }, p.posts ? p.posts + "件" : "投稿なし")); })
+    : [el("div", { class: "help" }, "まだ他の人の投稿がありません。相手に「自分のIDをコピー」で ID を送ってもらい、下に貼り付けて追加できます。")];
+  const idIn = el("input", { type: "text", placeholder: "相手の ID（28文字）を貼り付け", style: "flex:1;font-family:Consolas,monospace;font-size:12px" });
+  const addById = () => { const v = idIn.value.trim(); if (!/^[A-Za-z0-9]{20,40}$/.test(v)) { toast("ID の形式が違います"); return; } setEditor(v, true, ""); closePop(); };
+  popEl = el("div", { class: "pop", style: "width:340px" }, el("div", { class: "nm" }, "編集権限を渡す"), el("div", { class: "sn" }, "チェックした人は、この部屋のすべての投稿とグループを編集できます"),
+    el("div", { style: "display:flex;flex-direction:column;gap:4px;max-height:220px;overflow:auto;margin-top:8px" }, ...rows),
+    el("div", { class: "row", style: "border-top:1px solid var(--line);padding-top:8px" }, idIn, el("button", { class: "small", onclick: addById }, "IDで追加")));
+  document.body.append(popEl);
+  const r = anchor.getBoundingClientRect(); let left = r.left + scrollX; if (left + 350 > innerWidth + scrollX) left = Math.max(4, innerWidth + scrollX - 355); popEl.style.left = left + "px"; popEl.style.top = (r.bottom + scrollY + 6) + "px";
+}
 function localUid() { try { let u = localStorage.getItem("rrp.uid"); if (!u) { u = "local-" + uid() + uid(); localStorage.setItem("rrp.uid", u); } return u; } catch (e) { return "local-" + uid(); } }
 function userName() { const u = sync.user; if (!u || u.isAnonymous) return ""; return u.displayName || (u.providerData && u.providerData[0] && u.providerData[0].displayName) || u.email || "Googleユーザー"; }
 function applyUser(u) { sync.user = u; sync.uid = u ? u.uid : localUid(); sync.authed = !!u; renderAuth(); }
@@ -1103,7 +1140,8 @@ function renderAuth() {
   const name = userName();
   b.textContent = name ? "👤 " + name : "Googleでログイン"; b.classList.toggle("primary", false);
   b.title = name ? "Googleでログイン中。クリックでログアウト" : "Googleアカウントでログインすると、別の端末でも自分の投稿を編集できます";
-  const me = $("#roomMe"); if (me) me.textContent = (name ? "あなた: " + name + "（Google）" : "あなた: 匿名（この端末のみ）") + (isMaster() ? " ★マスター（全編集可）" : "");
+  const me = $("#roomMe"); if (me) me.textContent = (name ? "あなた: " + name + "（Google）" : "あなた: 匿名（この端末のみ）") + (isMaster() ? " ★マスター（全編集可）" : isEditor() ? " ✎ 編集権限あり（全編集可）" : "");
+  const be = $("#btnEditors"); if (be) { be.classList.toggle("hidden", !(isRoom() && canManageRoom())); const n = roomEditors().length; be.textContent = "👥 編集権限" + (n ? `（${n}人）` : ""); }
 }
 $("#btnAuth").addEventListener("click", () => { if (userName()) logoutGoogle(); else loginGoogle(); });
 function memberPayload(m) { return { uid: m.uid || sync.uid, owner: m.uid && m.uid !== sync.uid ? (m.owner || "") : userName(), name: m.name || "", role: m.role || "", color: m.color || COLORS[0], pack: packOf(m), belt: m.belt, main: m.main, wear: m.wear, bag: m.bag, order: m.order ?? 0, createdAt: m.createdAt ?? Date.now(), updatedAt: Date.now() }; }
@@ -1204,6 +1242,8 @@ async function createRoom() {
 $("#btnRoom").addEventListener("click", () => { const p = state.plan(); if (confirm(`現在の計画「${p.name}」（${p.members.length}人）をオンライン部屋にします。よろしいですか？`)) createRoom(); });
 $("#btnRoomUrl").addEventListener("click", e => copyText(roomUrl(), e.currentTarget));
 $("#btnRoomLeave").addEventListener("click", () => { leaveRoom(false); toast("ローカルの計画に戻りました"); });
+$("#btnEditors").addEventListener("click", e => openEditors(e.currentTarget));
+$("#btnMyId").addEventListener("click", e => { if (!sync.uid) { toast("接続後に使えます"); return; } copyText(sync.uid, e.currentTarget); toast("自分のIDをコピーしました。部屋の作成者に送ると編集権限をもらえます"); });
 window.addEventListener("beforeunload", () => { for (const [id, t] of sync.timers) { clearTimeout(t); const m = sync.plan && sync.plan.members.find(x => x.id === id); if (m && sync.fs) sync.fs.setDoc(sync.fs.doc(sync.db, "rustraid_rooms", sync.room, "members", id), memberPayload(m)); } });
 
 /* ============ boot ============ */

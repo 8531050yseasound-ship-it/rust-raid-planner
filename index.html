@@ -274,7 +274,7 @@ body.room .localonly{display:none!important}
         <span class="k" id="stackNote">×1＝公式サーバー（例：5.56弾 128、木材 1000、C4 10）</span></div>
       <div class="zone"><h3>手持ち <span class="k">ホットバー 6スロット</span></h3><div id="zBelt" class="grid"></div></div>
       <div class="zone"><h3>バッグ <span class="k">インベントリ 24スロット</span></h3><div id="zMain" class="grid"></div></div>
-      <div class="zone"><h3>装備 <span class="k">着用 7スロット ＋ 特別枠1（バックパック／パラシュート専用）</span></h3><div id="zWear" class="grid wear"></div></div>
+      <div class="zone"><h3>装備 <span class="k">着用 7スロット ＋ 特別枠1（バックパック／パラシュート専用）</span> <button id="btnGearTpl" class="small editonly" title="装備一式をテンプレとして保存し、あとから選んで適用">装備テンプレ ▾</button></h3><div id="zWear" class="grid wear"></div></div>
       <div class="zone"><h3>バックパック
           <select id="mPack" class="editonly" title="背負うバックパック"></select>
           <img id="mPackIcon" class="packicon" alt="">
@@ -420,7 +420,7 @@ const state = {
 
 /* ============ helpers ============ */
 const $ = s => document.querySelector(s);
-const el = (t, a = {}, ...ch) => { const e = document.createElement(t); for (const k in a) { if (k === "class") e.className = a[k]; else if (k.startsWith("on")) e.addEventListener(k.slice(2), a[k]); else if (k === "html") e.innerHTML = a[k]; else e.setAttribute(k, a[k]); } for (const c of ch) if (c != null) e.append(c); return e; };
+const el = (t, a = {}, ...ch) => { const e = document.createElement(t); for (const k in a) { if (k === "class") e.className = a[k]; else if (k.startsWith("on")) e.addEventListener(k.slice(2), a[k]); else if (k === "html") e.innerHTML = a[k]; else if (a[k] != null) e.setAttribute(k, a[k]); } for (const c of ch) if (c != null) e.append(c); return e; };
 const item = s => BY.get(s);
 const jname = it => it ? ((it.j && it.j[0]) || it.n) : "?";
 const mlabel = m => (m && (m.role || m.name)) || "(役割未設定)";   // 参加者は役割名だけで表す
@@ -831,11 +831,40 @@ document.addEventListener("keydown", e => {
   if ((e.ctrlKey || e.metaKey) && !e.altKey) { const k = e.key.toLowerCase(); if (k === "z") { e.preventDefault(); e.shiftKey ? doRedo() : doUndo(); } else if (k === "y") { e.preventDefault(); doRedo(); } }
 });
 
+/* ============ 装備テンプレ（着用7＋特別枠の一式を保存して選択適用。ブラウザに保存） ============ */
+const LS_GEAR = "rrp.geartpl.v1";
+function loadGearTpl() { try { const a = JSON.parse(localStorage.getItem(LS_GEAR)); return Array.isArray(a) ? a : []; } catch (e) { return []; } }
+function saveGearTpl(list) { try { localStorage.setItem(LS_GEAR, JSON.stringify(list)); } catch (e) { } }
+function openGearTpl(anchor) {
+  const m = state.member(); if (!m) return; closePop();
+  const list = loadGearTpl(); const mine = isMine(m);
+  const rows = list.length ? list.map(t => el("div", { class: "row", style: "gap:4px" },
+    el("div", { style: "display:flex;gap:2px;flex:none" }, ...t.wear.map(x => x && item(x.s) ? el("img", { src: ico(x.s), style: "width:20px;height:20px;background:var(--slot);border-radius:3px", title: jname(item(x.s)) }) : el("span", { style: "width:20px;height:20px;background:var(--slot);border-radius:3px;display:inline-block" }))),
+    el("span", { class: "nm", style: "flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px", title: t.name }, t.name),
+    el("button", { class: "small primary", disabled: mine ? null : "", title: "この参加者の装備欄をこのテンプレで置き換える", onclick: () => { applyGearTpl(t); closePop(); } }, "適用"),
+    el("button", { class: "small danger", title: "テンプレを削除", onclick: () => { if (confirm(`装備テンプレ「${t.name}」を削除しますか？`)) { saveGearTpl(loadGearTpl().filter(x => x.id !== t.id)); closePop(); openGearTpl(anchor); } } }, "×")))
+    : [el("div", { class: "help" }, "まだテンプレがありません。今の装備欄を保存してください。")];
+  const nameIn = el("input", { type: "text", placeholder: "テンプレ名（例：フル金属、ハズマット）", style: "flex:1" });
+  const save = () => { const name = nameIn.value.trim(); if (!name) { toast("テンプレ名を入力してください"); nameIn.focus(); return; } const wear = m.wear.map(x => x ? { s: x.s, q: 1 } : null); if (!wear.some(Boolean)) { toast("装備欄が空です"); return; } const l = loadGearTpl(); l.push({ id: uid(), name, wear }); saveGearTpl(l); toast(`装備テンプレ「${name}」を保存しました`); closePop(); openGearTpl(anchor); };
+  nameIn.addEventListener("keydown", e => { if (e.key === "Enter") save(); });
+  popEl = el("div", { class: "pop", style: "width:340px" }, el("div", { class: "nm" }, "装備テンプレ"), ...rows,
+    el("div", { class: "row", style: "border-top:1px solid var(--line);padding-top:8px" }, nameIn, el("button", { class: "small", onclick: save }, "今の装備を保存")));
+  document.body.append(popEl);
+  const r = anchor.getBoundingClientRect(); let left = r.left + scrollX; if (left + 350 > innerWidth + scrollX) left = innerWidth + scrollX - 355; popEl.style.left = left + "px"; popEl.style.top = (r.bottom + scrollY + 6) + "px";
+}
+function applyGearTpl(t) {
+  const m = state.member(); if (!m || !isMine(m)) return;
+  m.wear = Array(ZONES.wear).fill(null);
+  t.wear.forEach((x, i) => { if (x && item(x.s) && canPlace("wear", i, item(x.s)).ok) m.wear[i] = { s: x.s, q: 1 }; });
+  migratePack(m); state.save(); renderAll(); toast(`装備テンプレ「${t.name}」を適用しました`);
+}
+$("#btnGearTpl").addEventListener("click", e => openGearTpl(e.currentTarget));
+
 /* ============ undo / redo ============
  * state.save() のたびに「直前の状態」を積む方式。部屋モードでは自分の投稿だけが対象。
  * 役割名・色・計画名のタイプ中（kind="text"）は 1.5 秒以内の連続変更を 1 手にまとめる */
 const undo = { stack: [], redo: [], last: null, lastT: 0, lastKind: "", planId: null, MAX: 60, applying: false };
-function undoSnapshot() { const p = state.plan(); return JSON.stringify({ name: p.name, stack: p.stack || 1, members: p.members.filter(m => isMine(m)) }); }
+function undoSnapshot() { const p = state.plan(); return JSON.stringify({ name: p.name, stack: p.stack || 1, members: p.members.filter(m => isMine(m)).map(m => ({ ...m, pack: packOf(m) })) }); }   // pack は特別枠から導出（古い値が復元時に混ざらないように）
 function undoReset() { undo.stack = []; undo.redo = []; undo.last = undoSnapshot(); undo.planId = state.plan().id; undo.lastKind = ""; renderUndoBtns(); }
 function undoRecord(kind) {
   if (undo.applying) return;

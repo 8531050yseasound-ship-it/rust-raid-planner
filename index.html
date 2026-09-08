@@ -224,6 +224,8 @@ body.room .localonly{display:none!important}
     <button id="btnRoom" class="editonly localonly hidden" title="みんなで同時編集できるオンライン部屋を作り、URLを共有する">🌐 オンライン部屋を作る</button>
     <button id="btnAuth" class="editonly hidden" title="Googleアカウントでログインすると、別の端末でも自分の投稿を編集できます">Googleでログイン</button>
     <button id="btnTip" class="ghost" title="アイテムにカーソルを合わせたとき、大きな画像と名前を表示する（既定はオフ）">🔍 拡大表示: オフ</button>
+    <button id="btnUndo" class="editonly" title="元に戻す（Ctrl+Z）" disabled>↶</button>
+    <button id="btnRedo" class="editonly" title="やり直す（Ctrl+Y / Ctrl+Shift+Z）" disabled>↷</button>
     <button id="btnShare" title="この計画をURLとして共有（メンバーに送る）">🔗 共有リンク</button>
     <button id="btnExport" class="editonly">💾 書出</button>
     <button id="btnImport" class="editonly localonly">📂 読込</button>
@@ -400,7 +402,8 @@ const state = {
   data: null, sel: null, tab: "me", checks: {},
   plan() { if (sync.plan) return sync.plan; return this.data.plans.find(p => p.id === this.data.current) || this.data.plans[0]; },
   member() { return this.plan().members.find(m => m.id === this.sel) || null; },
-  save() { if (sync.plan) { syncPushDirty(); return; } this.plan().updated = Date.now(); try { localStorage.setItem(LS_KEY, JSON.stringify(this.data)); } catch (e) { } },
+  save(kind) { undoRecord(kind); this.persist(); },
+  persist() { if (sync.plan) { syncPushDirty(); return; } this.plan().updated = Date.now(); try { localStorage.setItem(LS_KEY, JSON.stringify(this.data)); } catch (e) { } },
   saveChecks() { try { localStorage.setItem(LS_CHK, JSON.stringify(this.checks)); } catch (e) { } },
   load() {
     try { this.data = JSON.parse(localStorage.getItem(LS_KEY)); } catch (e) { }
@@ -789,12 +792,12 @@ async function handleHash() {
 
 /* ============ header / members actions ============ */
 $("#planSel").addEventListener("change", e => { state.data.current = e.target.value; state.sel = (state.plan().members[0] || {}).id || null; state.save(); renderAll(); });
-$("#planName").addEventListener("input", e => { state.plan().name = e.target.value; if (isRoom()) syncRoomName(e.target.value); else state.save(); renderMembers(); });
+$("#planName").addEventListener("input", e => { state.plan().name = e.target.value; if (isRoom()) syncRoomName(e.target.value); else state.save("text"); renderMembers(); });
 $("#btnNewPlan").addEventListener("click", () => { const p = emptyPlan("レイド計画 " + (state.data.plans.length + 1)); state.data.plans.push(p); state.data.current = p.id; state.sel = null; state.save(); renderAll(); });
 $("#btnDelPlan").addEventListener("click", () => { const p = state.plan(); if (!confirm(`計画「${p.name}」を削除しますか？`)) return; state.data.plans = state.data.plans.filter(x => x.id !== p.id); if (!state.data.plans.length) state.data.plans.push(emptyPlan()); state.data.current = state.data.plans[0].id; state.sel = (state.plan().members[0] || {}).id || null; state.save(); renderAll(); });
 $("#btnAddMember").addEventListener("click", () => { const m = emptyMember("", ""); state.plan().members.push(m); state.sel = m.id; state.save(); renderAll(); setTimeout(() => $("#mRole").focus(), 0); });
-$("#mRole").addEventListener("input", e => { const m = state.member(); if (m) { m.role = e.target.value; state.save(); renderMembers(); } });
-$("#mColor").addEventListener("input", e => { const m = state.member(); if (m) { m.color = e.target.value; state.save(); renderMembers(); } });
+$("#mRole").addEventListener("input", e => { const m = state.member(); if (m) { m.role = e.target.value; state.save("text"); renderMembers(); } });
+$("#mColor").addEventListener("input", e => { const m = state.member(); if (m) { m.color = e.target.value; state.save("text"); renderMembers(); } });
 function copyMember() {
   const m = state.member(); if (!m) return;
   const mine = isMine(m); const c = JSON.parse(JSON.stringify(m)); const fresh = emptyMember();   // id/uid/order/createdAt を新規に
@@ -820,7 +823,50 @@ $("#tabAll").addEventListener("click", () => { state.tab = "all"; renderSummary(
 $("#btnResetChecks").addEventListener("click", () => { const m = state.member(); delete state.checks[checkKey(state.tab === "all" ? null : (m && m.id))]; state.saveChecks(); renderSummary(); });
 for (const id of ["#optQty", "#optChunk", "#optWear", "#optPack"]) $(id).addEventListener("change", renderConv);
 $("#btnRaid").addEventListener("click", () => { const on = document.body.classList.toggle("raid"); $("#btnRaid").textContent = on ? "✎ 編集に戻る" : "⚔ レイド表示"; closePop(); moveSrc = null; renderAll(); });
-document.addEventListener("keydown", e => { if (e.key === "Escape") { closePop(); if (moveSrc) { moveSrc = null; renderAll(); } if (placeItem) setPlaceItem(null); } });
+document.addEventListener("keydown", e => {
+  if (e.key === "Escape") { closePop(); if (moveSrc) { moveSrc = null; renderAll(); } if (placeItem) setPlaceItem(null); return; }
+  const tag = (e.target.tagName || "").toLowerCase(); if (tag === "input" || tag === "textarea" || tag === "select" || e.target.isContentEditable) return;
+  if ((e.ctrlKey || e.metaKey) && !e.altKey) { const k = e.key.toLowerCase(); if (k === "z") { e.preventDefault(); e.shiftKey ? doRedo() : doUndo(); } else if (k === "y") { e.preventDefault(); doRedo(); } }
+});
+
+/* ============ undo / redo ============
+ * state.save() のたびに「直前の状態」を積む方式。部屋モードでは自分の投稿だけが対象。
+ * 役割名・色・計画名のタイプ中（kind="text"）は 1.5 秒以内の連続変更を 1 手にまとめる */
+const undo = { stack: [], redo: [], last: null, lastT: 0, lastKind: "", planId: null, MAX: 60, applying: false };
+function undoSnapshot() { const p = state.plan(); return JSON.stringify({ name: p.name, stack: p.stack || 1, members: p.members.filter(m => isMine(m)) }); }
+function undoReset() { undo.stack = []; undo.redo = []; undo.last = undoSnapshot(); undo.planId = state.plan().id; undo.lastKind = ""; renderUndoBtns(); }
+function undoRecord(kind) {
+  if (undo.applying) return;
+  const p = state.plan(); if (undo.planId !== p.id) { undoReset(); return; }
+  const snap = undoSnapshot(); if (undo.last === null) { undo.last = snap; return; }
+  if (snap !== undo.last) {
+    const now = Date.now();
+    if (!(kind === "text" && undo.lastKind === "text" && now - undo.lastT < 1500)) { undo.stack.push(undo.last); if (undo.stack.length > undo.MAX) undo.stack.shift(); undo.redo = []; }
+    undo.lastT = now; undo.lastKind = kind || "";
+    undo.last = snap; renderUndoBtns();
+  }
+}
+function undoApply(json) {
+  const s = JSON.parse(json); const p = state.plan();
+  undo.applying = true;
+  try {
+    if (!isRoom()) { p.name = s.name; p.stack = s.stack; p.members = s.members; }
+    else {
+      const ids = new Set(s.members.map(m => m.id));
+      for (const m of p.members) if (isMine(m) && !ids.has(m.id)) syncDelete(m.id);             // 取り消しで消える自分の投稿
+      const others = p.members.filter(m => !isMine(m));
+      p.members = [...others, ...s.members].sort((a, b) => (a.order ?? 0) - (b.order ?? 0) || (a.createdAt ?? 0) - (b.createdAt ?? 0));
+    }
+    for (const m of p.members) migratePack(m);
+    if (!p.members.some(m => m.id === state.sel)) state.sel = (p.members.find(m => isMine(m)) || p.members[0] || {}).id || null;
+    state.persist();
+  } finally { undo.applying = false; }
+  undo.last = undoSnapshot(); undo.lastKind = ""; closePop(); moveSrc = null; renderAll();
+}
+function doUndo() { if (!undo.stack.length) { toast("戻せる操作がありません"); return; } const cur = undoSnapshot(); const prev = undo.stack.pop(); undo.redo.push(cur); undoApply(prev); toast(`元に戻しました（あと ${undo.stack.length}）`); }
+function doRedo() { if (!undo.redo.length) { toast("やり直せる操作がありません"); return; } const cur = undoSnapshot(); const next = undo.redo.pop(); undo.stack.push(cur); undoApply(next); toast("やり直しました"); }
+function renderUndoBtns() { $("#btnUndo").disabled = !undo.stack.length; $("#btnRedo").disabled = !undo.redo.length; $("#btnUndo").title = `元に戻す（Ctrl+Z）${undo.stack.length ? " ・ " + undo.stack.length + " 手" : ""}`; }
+$("#btnUndo").addEventListener("click", doUndo); $("#btnRedo").addEventListener("click", doRedo);
 
 function renderAll() { renderMembers(); renderEditor(); renderSummary(); renderConv(); renderRoomBar(); }
 
@@ -939,13 +985,13 @@ async function joinRoom(id) {
     setRoomStatus("on"); renderAll();
   }, e => { setRoomStatus("err"); toast("同期エラー: " + (e.code || e.message)); });
   const u = new URL(location.href); u.searchParams.set("room", id); u.hash = ""; history.replaceState(null, "", u);
-  closePop(); moveSrc = null; state.tab = "me"; renderAll(); return true;
+  closePop(); moveSrc = null; state.tab = "me"; undoReset(); renderAll(); return true;
 }
 function leaveRoom(silent) {
   if (sync.unsubM) sync.unsubM(); if (sync.unsubR) sync.unsubR(); sync.unsubM = sync.unsubR = null;
   for (const t of sync.timers.values()) clearTimeout(t); sync.timers.clear(); sync.last.clear();
   sync.room = null; sync.plan = null; sync.roomDoc = null; sync.status = "off";
-  if (!silent) { const u = new URL(location.href); u.searchParams.delete("room"); history.replaceState(null, "", u); state.sel = (state.plan().members[0] || {}).id || null; renderAll(); }
+  if (!silent) { const u = new URL(location.href); u.searchParams.delete("room"); history.replaceState(null, "", u); state.sel = (state.plan().members[0] || {}).id || null; undoReset(); renderAll(); }
 }
 function payloadKey(m) { return JSON.stringify(memberPayload({ ...m, updatedAt: 0 })).replace(/"updatedAt":\d+/, ""); }
 function syncPushDirty() {
@@ -996,6 +1042,7 @@ window.addEventListener("beforeunload", () => { for (const [id, t] of sync.timer
   if (!state.sel) state.sel = (state.plan().members[0] || {}).id || null;
   await handleHash();
   renderPalette();
+  undoReset();
   renderAll();
   // 既に開いているタブで共有リンクを踏んだ場合（ハッシュだけ変わる＝再読込なし）も取り込む
   window.addEventListener("hashchange", handleHash);

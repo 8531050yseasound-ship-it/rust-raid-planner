@@ -258,6 +258,7 @@ body.room .localonly{display:none!important}
     <button id="btnRaid" class="primary" title="レイド中に見やすい大きな表示に切り替え">⚔ レイド表示</button>
     <button id="btnRoom" class="editonly localonly hidden" title="みんなで同時編集できるオンライン部屋を作り、URLを共有する">🌐 オンライン部屋を作る</button>
     <button id="btnAuth" class="editonly hidden" title="Googleアカウントでログインすると、別の端末でも自分の投稿を編集できます">Googleでログイン</button>
+    <button id="btnAuthDiscord" class="editonly hidden" title="Discordアカウントでログインすると、別の端末でも自分の投稿を編集できます">Discordでログイン</button>
     <button id="btnTip" class="ghost" title="アイテムにカーソルを合わせたとき、大きな画像と名前を表示する（既定はオフ）">🔍 拡大表示: オフ</button>
     <button id="btnUndo" class="editonly" title="元に戻す（Ctrl+Z）" disabled>↶</button>
     <button id="btnRedo" class="editonly" title="やり直す（Ctrl+Y / Ctrl+Shift+Z）" disabled>↷</button>
@@ -1075,7 +1076,7 @@ function openEditors(anchor) {
   const r = anchor.getBoundingClientRect(); let left = r.left + scrollX; if (left + 350 > innerWidth + scrollX) left = Math.max(4, innerWidth + scrollX - 355); popEl.style.left = left + "px"; popEl.style.top = (r.bottom + scrollY + 6) + "px";
 }
 function localUid() { try { let u = localStorage.getItem("rrp.uid"); if (!u) { u = "local-" + uid() + uid(); localStorage.setItem("rrp.uid", u); } return u; } catch (e) { return "local-" + uid(); } }
-function userName() { const u = sync.user; if (!u || u.isAnonymous) return ""; return u.displayName || (u.providerData && u.providerData[0] && u.providerData[0].displayName) || u.email || "Googleユーザー"; }
+function userName() { const u = sync.user; if (!u || u.isAnonymous) return ""; return u.displayName || (u.providerData && u.providerData[0] && u.providerData[0].displayName) || rememberedName(u.uid) || u.email || (providerLabel() + "ユーザー"); }
 function applyUser(u) { sync.user = u; sync.uid = u ? u.uid : localUid(); sync.authed = !!u; renderAuth(); }
 async function fbInit() {
   if (sync.db) return true; if (!sync.cfg) return false;
@@ -1101,24 +1102,37 @@ async function fbInit() {
   return true;
 }
 /* --- Google アカウント連携（任意・無料）。匿名ユーザーは「リンク」して uid を保ったまま Google 化する --- */
-async function loginGoogle() {
+/* ログインプロバイダ：Google（標準）と Discord（Firebase の OpenID Connect プロバイダ oidc.discord。Identity Platform 有効化＋Discord アプリ登録が必要） */
+const PROVIDERS = {
+  google: { label: "Google", make: A => { const p = new A.GoogleAuthProvider(); p.setCustomParameters({ prompt: "select_account" }); return p; }, credFromError: (A, e) => A.GoogleAuthProvider.credentialFromError(e) },
+  discord: { label: "Discord", make: A => { const p = new A.OAuthProvider("oidc.discord"); p.addScope("identify"); return p; }, credFromError: (A, e) => A.OAuthProvider.credentialFromError(e) },
+};
+function providerLabel() { const u = sync.user; const id = u && u.providerData && u.providerData[0] && u.providerData[0].providerId; return id === "oidc.discord" ? "Discord" : id === "google.com" ? "Google" : ""; }
+// Discord は id_token に表示名が入らないことがあるので、ログイン時のプロフィール（global_name / username）を uid ごとに控えておく
+function rememberProfile(A, result) {
+  try { const info = A.getAdditionalUserInfo && A.getAdditionalUserInfo(result); const pr = info && info.profile; if (!pr) return; const name = pr.global_name || pr.preferred_username || pr.username || pr.name; if (name) { const m = JSON.parse(localStorage.getItem("rrp.names") || "{}"); m[result.user.uid] = name; localStorage.setItem("rrp.names", JSON.stringify(m)); } } catch (e) { }
+}
+function rememberedName(uid) { try { return (JSON.parse(localStorage.getItem("rrp.names") || "{}") || {})[uid] || ""; } catch (e) { return ""; } }
+async function loginWith(kind) {
+  const P = PROVIDERS[kind]; if (!P) return;
   if (!(await fbInit()) || !sync.auth) { toast("オンライン機能は未設定です"); return; }
-  const A = sync.authM, auth = sync.auth, provider = new A.GoogleAuthProvider(); provider.setCustomParameters({ prompt: "select_account" });
+  const A = sync.authM, auth = sync.auth, provider = P.make(A);
   const cur = auth.currentUser;
   try {
     if (cur && cur.isAnonymous) {
-      try { await A.linkWithPopup(cur, provider); await cur.reload(); applyUser(auth.currentUser); toast("Googleと連携しました（この端末の投稿はそのまま自分のものです）"); }
+      try { const r = await A.linkWithPopup(cur, provider); rememberProfile(A, r); await cur.reload(); applyUser(auth.currentUser); toast(`${P.label}と連携しました（この端末の投稿はそのまま自分のものです）`); }
       catch (e) {
         if (e.code === "auth/credential-already-in-use" || e.code === "auth/email-already-in-use") {
-          // この Google アカウントは既に別端末で使用中 → そのアカウントに切り替える（この端末の匿名投稿は閲覧扱いになる）
-          const cred = A.GoogleAuthProvider.credentialFromError(e);
+          // このアカウントは既に別端末で使用中 → そのアカウントに切り替える（この端末の匿名投稿は閲覧扱いになる）
+          const cred = P.credFromError(A, e);
           const mine = sync.plan ? sync.plan.members.filter(m => isMine(m)).length : 0;
-          if (mine && !confirm(`このGoogleアカウントは既に別の端末で使われています。切り替えると、この端末で作った ${mine} 件の投稿は「閲覧」扱いになります（コピーで引き継げます）。切り替えますか？`)) return;
-          const r = await A.signInWithCredential(auth, cred); applyUser(r.user); toast("Googleアカウントに切り替えました");
+          if (mine && !confirm(`この${P.label}アカウントは既に別の端末で使われています。切り替えると、この端末で作った ${mine} 件の投稿は「閲覧」扱いになります（コピーで引き継げます）。切り替えますか？`)) return;
+          const r = await A.signInWithCredential(auth, cred); rememberProfile(A, r); applyUser(r.user); toast(`${P.label}アカウントに切り替えました`);
         } else throw e;
       }
-    } else { const r = await A.signInWithPopup(auth, provider); applyUser(r.user); toast("Googleでログインしました"); }
+    } else { const r = await A.signInWithPopup(auth, provider); rememberProfile(A, r); applyUser(r.user); toast(`${P.label}でログインしました`); }
   } catch (e) {
+    if (e.code === "auth/operation-not-allowed") { toast(`${P.label}ログインは Firebase 側でまだ有効になっていません`); return; }
     if (e.code === "auth/popup-blocked" || e.code === "auth/operation-not-supported-in-this-environment") {
       try { localStorage.setItem("rrp.redirect", "1"); if (cur && cur.isAnonymous) await A.linkWithRedirect(cur, provider); else await A.signInWithRedirect(auth, provider); } catch (e2) { toast("ログインできませんでした: " + (e2.code || e2.message)); }
       return;
@@ -1130,20 +1144,21 @@ async function loginGoogle() {
 }
 async function logoutGoogle() {
   if (!sync.auth) return;
-  if (!confirm("ログアウトすると、この端末は新しい匿名ユーザーになります（Googleで作った投稿は、再ログインすればまた編集できます）。よろしいですか？")) return;
+  if (!confirm(`ログアウトすると、この端末は新しい匿名ユーザーになります（${providerLabel() || "アカウント"}で作った投稿は、再ログインすればまた編集できます）。よろしいですか？`)) return;
   try { await sync.authM.signOut(sync.auth); const u = (await sync.authM.signInAnonymously(sync.auth)).user; applyUser(u); toast("ログアウトしました"); renderAll(); }
   catch (e) { toast("ログアウトできませんでした: " + (e.code || e.message)); }
 }
 function renderAuth() {
-  const b = $("#btnAuth"); if (!sync.cfg) { b.classList.add("hidden"); return; }
-  b.classList.remove("hidden");
-  const name = userName();
-  b.textContent = name ? "👤 " + name : "Googleでログイン"; b.classList.toggle("primary", false);
-  b.title = name ? "Googleでログイン中。クリックでログアウト" : "Googleアカウントでログインすると、別の端末でも自分の投稿を編集できます";
-  const me = $("#roomMe"); if (me) me.textContent = (name ? "あなた: " + name + "（Google）" : "あなた: 匿名（この端末のみ）") + (isMaster() ? " ★マスター（全編集可）" : isEditor() ? " ✎ 編集権限あり（全編集可）" : "");
+  const b = $("#btnAuth"), bd = $("#btnAuthDiscord"); if (!sync.cfg) { b.classList.add("hidden"); bd.classList.add("hidden"); return; }
+  const name = userName(); const pl = providerLabel();
+  b.classList.remove("hidden"); bd.classList.toggle("hidden", !!name || !window.RRP_DISCORD);
+  b.textContent = name ? "👤 " + name + (pl ? `（${pl}）` : "") : "Googleでログイン"; b.classList.toggle("primary", false);
+  b.title = name ? `${pl}でログイン中。クリックでログアウト` : "Googleアカウントでログインすると、別の端末でも自分の投稿を編集できます";
+  const me = $("#roomMe"); if (me) me.textContent = (name ? `あなた: ${name}（${pl || "ログイン中"}）` : "あなた: 匿名（この端末のみ）") + (isMaster() ? " ★マスター（全編集可）" : isEditor() ? " ✎ 編集権限あり（全編集可）" : "");
   const be = $("#btnEditors"); if (be) { be.classList.toggle("hidden", !(isRoom() && canManageRoom())); const n = roomEditors().length; be.textContent = "👥 編集権限" + (n ? `（${n}人）` : ""); }
 }
-$("#btnAuth").addEventListener("click", () => { if (userName()) logoutGoogle(); else loginGoogle(); });
+$("#btnAuth").addEventListener("click", () => { if (userName()) logoutGoogle(); else loginWith("google"); });
+$("#btnAuthDiscord").addEventListener("click", () => loginWith("discord"));
 function memberPayload(m) { return { uid: m.uid || sync.uid, owner: m.uid && m.uid !== sync.uid ? (m.owner || "") : userName(), name: m.name || "", role: m.role || "", color: m.color || COLORS[0], pack: packOf(m), belt: m.belt, main: m.main, wear: m.wear, bag: m.bag, order: m.order ?? 0, createdAt: m.createdAt ?? Date.now(), updatedAt: Date.now() }; }
 function normMember(id, d) {
   const m = { id, uid: d.uid || "", owner: d.owner || "", name: d.name || "", role: d.role || "", color: d.color || COLORS[0], pack: PACKS[d.pack] ? d.pack : "none", order: d.order ?? 0, createdAt: d.createdAt ?? 0, belt: [], main: [], wear: [], bag: [] };
